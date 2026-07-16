@@ -157,7 +157,7 @@ func (rcs *ReplicaScheduler) FindDiskCandidates(replica *longhorn.Replica, repli
 		}
 	}
 
-	nodeCandidates, errs := rcs.getNodeCandidates(nodes, replica, linkedClone, linkedCloneSrcReplicaNodes)
+	nodeCandidates, errs := rcs.getNodeCandidates(nodes, replica, volume, linkedClone, linkedCloneSrcReplicaNodes)
 
 	if len(nodeCandidates) == 0 {
 		return nil, errs
@@ -210,7 +210,7 @@ func (rcs *ReplicaScheduler) getSrcReplicaNodesAndDisks(volume *longhorn.Volume)
 	return srcRNodes, srcRDisks, nil
 }
 
-func (rcs *ReplicaScheduler) getNodeCandidates(nodes map[string]*longhorn.Node, schedulingReplica *longhorn.Replica, linkedClone bool, linkedCloneSrcReplicaNodes map[string]bool) (nodeCandidates map[string]*longhorn.Node, errs multierr.MultiError) {
+func (rcs *ReplicaScheduler) getNodeCandidates(nodes map[string]*longhorn.Node, schedulingReplica *longhorn.Replica, volume *longhorn.Volume, linkedClone bool, linkedCloneSrcReplicaNodes map[string]bool) (nodeCandidates map[string]*longhorn.Node, errs multierr.MultiError) {
 	errs = multierr.NewMultiError()
 
 	// If the replica has a hard node affinity, filter nodes based on that.
@@ -248,6 +248,24 @@ func (rcs *ReplicaScheduler) getNodeCandidates(nodes map[string]*longhorn.Node, 
 	nodeCandidates = map[string]*longhorn.Node{}
 	for _, node := range nodes {
 		log := logrus.WithField("node", node.Name)
+
+		if !types.IsDataEngineV2(schedulingReplica.Spec.DataEngine) {
+			capabilities, err := rcs.ds.GetEngineImageNodeCapabilities(schedulingReplica.Spec.Image, node.Name)
+			if err != nil {
+				errs.Append(longhorn.ErrorReplicaScheduleLonghornClientOperationFailed,
+					errors.Wrapf(err, "failed to resolve replica capabilities for engine image %v on node %v", schedulingReplica.Spec.Image, node.Name))
+				continue
+			}
+			requirements := types.ResolveVolumeRequirements(volume)
+			missing := append(types.MissingCapabilities(capabilities.Replica, requirements.Replica),
+				types.MissingCapabilities(capabilities.Disk, requirements.Disk)...)
+			if len(missing) > 0 {
+				errs.Append(longhorn.ErrorReplicaScheduleCapabilityNotSupported,
+					fmt.Errorf("node %v: %v", node.Name, types.FormatMissingCapabilities("replica", missing)))
+				log.WithField("missingCapabilities", missing).Debug("Excluding node because required replica capabilities are unavailable")
+				continue
+			}
+		}
 
 		if types.IsDataEngineV2(schedulingReplica.Spec.DataEngine) {
 			disabled, err := rcs.ds.IsV2DataEngineDisabledForNode(node.Name)

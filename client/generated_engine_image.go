@@ -4,6 +4,13 @@ const (
 	ENGINE_IMAGE_TYPE = "engineImage"
 )
 
+type EngineImageNodeCapabilities struct {
+	Controller []string `json:"controller,omitempty" yaml:"controller,omitempty"`
+	Replica    []string `json:"replica,omitempty" yaml:"replica,omitempty"`
+	Frontend   []string `json:"frontend,omitempty" yaml:"frontend,omitempty"`
+	Disk       []string `json:"disk,omitempty" yaml:"disk,omitempty"`
+}
+
 type EngineImage struct {
 	Resource `yaml:"-"`
 
@@ -36,6 +43,8 @@ type EngineImage struct {
 	NoRefSince string `json:"noRefSince,omitempty" yaml:"no_ref_since,omitempty"`
 
 	NodeDeploymentMap map[string]bool `json:"nodeDeploymentMap,omitempty" yaml:"node_deployment_map,omitempty"`
+
+	NodeCapabilities map[string]EngineImageNodeCapabilities `json:"nodeCapabilities,omitempty" yaml:"node_capabilities,omitempty"`
 
 	OwnerID string `json:"ownerID,omitempty" yaml:"owner_id,omitempty"`
 

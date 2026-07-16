@@ -34,6 +34,10 @@ type EngineImageStatusApplyConfiguration struct {
 	Incompatible      *bool                             `json:"incompatible,omitempty"`
 	Conditions        []ConditionApplyConfiguration     `json:"conditions,omitempty"`
 	NodeDeploymentMap map[string]bool                   `json:"nodeDeploymentMap,omitempty"`
+	// NodeCapabilities is keyed by Kubernetes node name. It intentionally sits
+	// beside NodeDeploymentMap instead of replacing it so older managers and
+	// engine images remain rolling-upgrade compatible.
+	NodeCapabilities map[string]EngineImageNodeCapabilitiesApplyConfiguration `json:"nodeCapabilities,omitempty"`
 }
 
 // EngineImageStatusApplyConfiguration constructs a declarative configuration of the EngineImageStatus type for use with
@@ -105,6 +109,20 @@ func (b *EngineImageStatusApplyConfiguration) WithNodeDeploymentMap(entries map[
 	}
 	for k, v := range entries {
 		b.NodeDeploymentMap[k] = v
+	}
+	return b
+}
+
+// WithNodeCapabilities puts the entries into the NodeCapabilities field in the declarative configuration
+// and returns the receiver, so that objects can be build by chaining "With" function invocations.
+// If called multiple times, the entries provided by each call will be put on the NodeCapabilities field,
+// overwriting an existing map entries in NodeCapabilities field with the same key.
+func (b *EngineImageStatusApplyConfiguration) WithNodeCapabilities(entries map[string]EngineImageNodeCapabilitiesApplyConfiguration) *EngineImageStatusApplyConfiguration {
+	if b.NodeCapabilities == nil && len(entries) > 0 {
+		b.NodeCapabilities = make(map[string]EngineImageNodeCapabilitiesApplyConfiguration, len(entries))
+	}
+	for k, v := range entries {
+		b.NodeCapabilities[k] = v
 	}
 	return b
 }

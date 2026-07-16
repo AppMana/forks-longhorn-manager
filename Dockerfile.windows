@@ -1,0 +1,6 @@
+ARG WINDOWS_BASE_TAG=ltsc2022
+FROM mcr.microsoft.com/windows/servercore:${WINDOWS_BASE_TAG}
+# The binaries are compiled by the native Windows job. Keeping this a
+# COPY-only WCOW build lets Docker use the matching Windows Server kernel.
+COPY bin/longhorn-manager.exe C:/usr/local/bin/longhorn-manager.exe
+COPY bin/longhorn-windows-csi.exe C:/usr/local/bin/longhorn-windows-csi.exe

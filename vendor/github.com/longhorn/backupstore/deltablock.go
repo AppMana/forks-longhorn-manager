@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/cockroachdb/errors"
@@ -1224,10 +1223,6 @@ func performIncrementalRestore(ctx context.Context, bsDriver BackupStoreDriver, 
 	}
 
 	return err
-}
-
-func fillZeros(volDev *os.File, offset, length int64) error {
-	return syscall.Fallocate(int(volDev.Fd()), 0, offset, length)
 }
 
 func DeleteBackupVolume(volumeName string, destURL string) (err error) {

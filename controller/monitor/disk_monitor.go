@@ -16,8 +16,6 @@ import (
 
 	lhtypes "github.com/longhorn/go-common-libs/types"
 
-	spdkdisk "github.com/longhorn/longhorn-spdk-engine/pkg/spdk"
-
 	"github.com/longhorn/go-common-libs/multierr"
 	"github.com/longhorn/longhorn-manager/datastore"
 	"github.com/longhorn/longhorn-manager/engineapi"
@@ -35,6 +33,7 @@ const (
 	HealthDataUpdateInterval = 10 * time.Minute
 
 	volumeMetaData = "volume.meta"
+	diskStateReady = "ready"
 )
 
 type DiskServiceClient struct {
@@ -327,7 +326,7 @@ func (m *DiskMonitor) collectDiskData(node *longhorn.Node) map[string]*Collected
 			}
 		}
 
-		if diskConfig.State != string(spdkdisk.DiskStateReady) {
+		if diskConfig.State != diskStateReady {
 			errs.Append("errors", fmt.Errorf("disk is not in ready state, current state: %v", diskConfig.State))
 
 			diskInfoMap[diskName] = NewDiskInfo(diskName, "", disk.Path, diskDriver, nodeOrDiskEvicted, nil,

@@ -67,6 +67,7 @@ require (
 	github.com/henrygd/beszel v0.18.2
 	github.com/jinzhu/copier v0.4.0
 	github.com/kubernetes-csi/csi-lib-utils v0.23.2
+	github.com/kubernetes-csi/csi-proxy/client v1.1.2
 	github.com/longhorn/backing-image-manager v1.12.0-rc3
 	github.com/longhorn/backupstore v0.0.0-20260512085050-2a21a780e44c
 	github.com/longhorn/go-common-libs v0.0.0-20260512083219-bb6c10ce1050
@@ -136,6 +137,7 @@ require (
 	github.com/go-openapi/swag/typeutils v0.25.4 // indirect
 	github.com/go-openapi/swag/yamlutils v0.25.4 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/gnostic-models v0.7.1 // indirect
 	github.com/klauspost/compress v1.18.1 // indirect
 	github.com/longhorn/types v0.0.0-20260514154143-1dfb06f48eeb // indirect
@@ -163,7 +165,7 @@ require (
 )
 
 require (
-	github.com/Microsoft/go-winio v0.6.2 // indirect
+	github.com/Microsoft/go-winio v0.6.2
 	github.com/avast/retry-go v3.0.0+incompatible
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/blang/semver/v4 v4.0.0 // indirect

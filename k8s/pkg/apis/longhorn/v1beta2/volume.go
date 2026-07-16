@@ -254,6 +254,13 @@ type VolumeSpec struct {
 	Size int64 `json:"size,string"`
 	// +optional
 	Frontend VolumeFrontend `json:"frontend"`
+	// WorkloadFileSystem is the normalized filesystem requested through CSI.
+	// It is persisted so attachment capability checks do not have to infer the
+	// filesystem from a StorageClass or PersistentVolume after provisioning.
+	// +kubebuilder:validation:Enum="";ext4;xfs;ntfs;refs
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="WorkloadFileSystem is immutable"
+	// +optional
+	WorkloadFileSystem string `json:"workloadFileSystem"`
 	// ublkQueueDepth controls the depth of each queue for ublk frontend.
 	// +optional
 	UblkQueueDepth int `json:"ublkQueueDepth,omitempty"`

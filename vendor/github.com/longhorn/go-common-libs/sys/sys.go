@@ -12,7 +12,6 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 
 	"github.com/longhorn/go-common-libs/types"
 
@@ -23,44 +22,14 @@ import (
 // and extracting the architecture information from the Utsname structure.
 // It returns the architecture as a string and an error if the operation fails.
 func GetArch() (string, error) {
-	utsname := &unix.Utsname{}
-	if err := unix.Uname(utsname); err != nil {
-		logrus.WithError(err).Warn("Failed to get system architecture")
-		return "", err
-	}
-
-	// Extract the architecture from the Utsname structure
-	arch := make([]byte, 0, len(utsname.Machine))
-	for _, b := range utsname.Machine {
-		if b == 0x00 {
-			logrus.Trace("Found end of architecture string [0x00]")
-			break
-		}
-		arch = append(arch, byte(b))
-	}
-	return string(arch), nil
+	return getArch()
 }
 
 // GetKernelRelease retrieves the kernel release by calling the unix.Uname function
 // and extracting the release information from the Utsname structure.
 // It returns the kernel release as a string and an error if the operation fails.
 func GetKernelRelease() (string, error) {
-	utsname := &unix.Utsname{}
-	if err := unix.Uname(utsname); err != nil {
-		logrus.WithError(err).Warn("Failed to get kernel release")
-		return "", err
-	}
-
-	// Extract the kernel release from the Utsname structure
-	release := make([]byte, 0, len(utsname.Release))
-	for _, b := range utsname.Release {
-		if b == 0x00 {
-			logrus.Trace("Found end of kernel release string [0x00]")
-			break
-		}
-		release = append(release, byte(b))
-	}
-	return string(release), nil
+	return getKernelRelease()
 }
 
 // GetOSDistro reads the /etc/os-release file and returns the ID field.

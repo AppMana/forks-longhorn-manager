@@ -364,3 +364,11 @@ func (s *TestSuite) TestCreateEngineImageDaemonSetSpecUsesDefaultLivenessProbeOn
 	c.Assert(livenessProbe.TimeoutSeconds, Equals, int32(datastore.PodProbeTimeoutSeconds))
 	c.Assert(livenessProbe.FailureThreshold, Equals, int32(datastore.PodLivenessProbeFailureThreshold))
 }
+
+func (s *TestSuite) TestWindowsEngineBinaryDirectory(c *C) {
+	c.Assert(
+		windowsEngineBinaryDirectory("registry.example.com/longhorn/engine:v1.12.0"),
+		Equals,
+		`C:\var\lib\longhorn\engine-binaries\registry.example.com-longhorn-engine-v1.12.0`,
+	)
+}

@@ -37,6 +37,25 @@ type EngineVersionDetails struct {
 	DataFormatMinVersion int `json:"dataFormatMinVersion"`
 }
 
+// EngineImageNodeCapabilities describes the features exposed by one platform
+// variant of an engine image on a specific node. Capabilities are role scoped
+// because a controller, replica, frontend, and replica disk can have different
+// platform requirements even when they use the same image.
+type EngineImageNodeCapabilities struct {
+	// +optional
+	// +nullable
+	Controller []string `json:"controller"`
+	// +optional
+	// +nullable
+	Replica []string `json:"replica"`
+	// +optional
+	// +nullable
+	Frontend []string `json:"frontend"`
+	// +optional
+	// +nullable
+	Disk []string `json:"disk"`
+}
+
 // EngineImageSpec defines the desired state of the Longhorn engine image
 type EngineImageSpec struct {
 	// +kubebuilder:validation:MinLength:=1
@@ -60,7 +79,13 @@ type EngineImageStatus struct {
 	Conditions []Condition `json:"conditions"`
 	// +optional
 	// +nullable
-	NodeDeploymentMap    map[string]bool `json:"nodeDeploymentMap"`
+	NodeDeploymentMap map[string]bool `json:"nodeDeploymentMap"`
+	// NodeCapabilities is keyed by Kubernetes node name. It intentionally sits
+	// beside NodeDeploymentMap instead of replacing it so older managers and
+	// engine images remain rolling-upgrade compatible.
+	// +optional
+	// +nullable
+	NodeCapabilities     map[string]EngineImageNodeCapabilities `json:"nodeCapabilities"`
 	EngineVersionDetails `json:""`
 }
 

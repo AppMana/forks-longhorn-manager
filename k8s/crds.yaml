@@ -1446,6 +1446,41 @@ spec:
                 type: boolean
               noRefSince:
                 type: string
+              nodeCapabilities:
+                additionalProperties:
+                  description: |-
+                    EngineImageNodeCapabilities describes the features exposed by one platform
+                    variant of an engine image on a specific node. Capabilities are role scoped
+                    because a controller, replica, frontend, and replica disk can have different
+                    platform requirements even when they use the same image.
+                  properties:
+                    controller:
+                      items:
+                        type: string
+                      nullable: true
+                      type: array
+                    disk:
+                      items:
+                        type: string
+                      nullable: true
+                      type: array
+                    frontend:
+                      items:
+                        type: string
+                      nullable: true
+                      type: array
+                    replica:
+                      items:
+                        type: string
+                      nullable: true
+                      type: array
+                  type: object
+                description: |-
+                  NodeCapabilities is keyed by Kubernetes node name. It intentionally sits
+                  beside NodeDeploymentMap instead of replacing it so older managers and
+                  engine images remain rolling-upgrade compatible.
+                nullable: true
+                type: object
               nodeDeploymentMap:
                 additionalProperties:
                   type: boolean
@@ -4121,6 +4156,21 @@ spec:
                 - disabled
                 - enabled
                 type: string
+              workloadFileSystem:
+                description: |-
+                  WorkloadFileSystem is the normalized filesystem requested through CSI.
+                  It is persisted so attachment capability checks do not have to infer the
+                  filesystem from a StorageClass or PersistentVolume after provisioning.
+                enum:
+                - ""
+                - ext4
+                - xfs
+                - ntfs
+                - refs
+                type: string
+                x-kubernetes-validations:
+                - message: WorkloadFileSystem is immutable
+                  rule: self == oldSelf
             type: object
           status:
             description: VolumeStatus defines the observed state of the Longhorn volume

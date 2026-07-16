@@ -65,7 +65,7 @@ func (e *EngineBinary) Name() string {
 }
 
 func (e *EngineBinary) LonghornEngineBinary() string {
-	return filepath.Join(types.GetEngineBinaryDirectoryOnHostForImage(e.image), "longhorn")
+	return filepath.Join(types.GetEngineBinaryDirectoryOnHostForImage(e.image), types.EngineBinaryName)
 }
 
 func (e *EngineBinary) ExecuteEngineBinary(args ...string) (string, error) {

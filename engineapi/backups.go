@@ -80,7 +80,7 @@ func NewBackupTargetClientFromBackupTarget(backupTarget *longhorn.BackupTarget, 
 }
 
 func (btc *BackupTargetClient) LonghornEngineBinary() string {
-	return filepath.Join(types.GetEngineBinaryDirectoryOnHostForImage(btc.Image), "longhorn")
+	return filepath.Join(types.GetEngineBinaryDirectoryOnHostForImage(btc.Image), types.EngineBinaryName)
 }
 
 // getBackupCredentialEnv returns the environment variables as KEY=VALUE in string slice

@@ -12,11 +12,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 
 	lhns "github.com/longhorn/go-common-libs/ns"
 
@@ -111,7 +109,6 @@ const (
 	MetadataDirectoryInContainer     = "/metadata/"
 	MetadataDirectoryOnHost          = "/var/lib/longhorn/metadata/"
 	ReplicaHostPrefix                = "/host"
-	EngineBinaryName                 = "longhorn"
 
 	UnixDomainSocketDirectoryInContainer = "/host/var/lib/longhorn/unix-domain-socket/"
 	UnixDomainSocketDirectoryOnHost      = "/var/lib/longhorn/unix-domain-socket/"
@@ -408,21 +405,21 @@ func GetImageCanonicalName(image string) string {
 
 func GetEngineBinaryDirectoryOnHostForImage(image string) string {
 	cname := GetImageCanonicalName(image)
-	return filepath.Join(EngineBinaryDirectoryOnHost, cname)
+	return filepath.Join(engineBinaryDirectoryOnHost(), cname)
 }
 
 func GetEngineBinaryDirectoryForEngineManagerContainer(image string) string {
 	cname := GetImageCanonicalName(image)
-	return filepath.Join(EngineBinaryDirectoryInContainer, cname)
+	return filepath.Join(engineBinaryDirectoryInContainer(), cname)
 }
 
 func GetEngineBinaryDirectoryForReplicaManagerContainer(image string) string {
 	cname := GetImageCanonicalName(image)
-	return filepath.Join(filepath.Join(ReplicaHostPrefix, EngineBinaryDirectoryOnHost), cname)
+	return filepath.Join(engineBinaryDirectoryForReplicaManager(), cname)
 }
 
 func EngineBinaryExistOnHostForImage(image string) (bool, error) {
-	engineBinaryPath := filepath.Join(GetEngineBinaryDirectoryOnHostForImage(image), "longhorn")
+	engineBinaryPath := filepath.Join(GetEngineBinaryDirectoryOnHostForImage(image), EngineBinaryName)
 	st, err := os.Stat(engineBinaryPath)
 	if err != nil {
 		return false, err
@@ -1190,22 +1187,7 @@ func CreateDisksFromAnnotation(annotation string, storageReservedPercentage int6
 }
 
 func getBlockDeviceSize(devicePath string) (uint64, error) {
-	file, err := os.Open(devicePath)
-	if err != nil {
-		return 0, fmt.Errorf("failed to open block device at %s: %w", devicePath, err)
-	}
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			logrus.WithError(closeErr).Warnf("Failed to close block device %s", devicePath)
-		}
-	}()
-	var size uint64
-	_, _, errno := unix.Syscall(unix.SYS_IOCTL, file.Fd(), 0x80081272, uintptr(unsafe.Pointer(&size)))
-	if errno != 0 {
-		return 0, fmt.Errorf("failed to get block device size for %s: errno=%v", devicePath, errno)
-	}
-
-	return size, nil
+	return getBlockDeviceSizePlatform(devicePath)
 }
 
 func GetNodeTagsFromAnnotation(annotation string) ([]string, error) {

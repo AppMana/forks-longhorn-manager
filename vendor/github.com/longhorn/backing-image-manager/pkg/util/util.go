@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"syscall"
 	"time"
 
 	"github.com/pkg/errors"
@@ -25,7 +24,6 @@ import (
 
 	"github.com/longhorn/go-common-libs/backingimage"
 
-	"github.com/longhorn/backing-image-manager/pkg/types"
 )
 
 func PrintJSON(obj interface{}) error {
@@ -243,15 +241,7 @@ func ConvertFromQcow2ToRaw(sourcePath, targetPath string) error {
 }
 
 func GetFileRealSize(filePath string) (int64, error) {
-	var stat syscall.Stat_t
-	err := syscall.Stat(filePath, &stat)
-	if err != nil {
-		return 0, err
-	}
-	fmt.Printf("stat.Blksize: %v\n", stat.Blksize)
-
-	// 512 is defined in the Linux kernel and remains consistent across all distributions.
-	return stat.Blocks * types.DefaultLinuxBlcokSize, nil
+	return getFileRealSize(filePath)
 }
 
 func FileModificationTime(filePath string) string {

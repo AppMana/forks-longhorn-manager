@@ -32,6 +32,7 @@ type Volume struct {
 	Name                            string                                 `json:"name"`
 	Size                            string                                 `json:"size"`
 	Frontend                        longhorn.VolumeFrontend                `json:"frontend"`
+	WorkloadFileSystem              string                                 `json:"workloadFileSystem"`
 	DisableFrontend                 bool                                   `json:"disableFrontend"`
 	FromBackup                      string                                 `json:"fromBackup"`
 	RestoreVolumeRecurringJob       longhorn.RestoreVolumeRecurringJobType `json:"restoreVolumeRecurringJob"`
@@ -1689,6 +1690,7 @@ func toVolumeResource(v *longhorn.Volume, vefs []*longhorn.EngineFrontend, ves [
 		Name:                            v.Name,
 		Size:                            strconv.FormatInt(v.Spec.Size, 10),
 		Frontend:                        v.Spec.Frontend,
+		WorkloadFileSystem:              v.Spec.WorkloadFileSystem,
 		DisableFrontend:                 v.Spec.DisableFrontend,
 		LastAttachedBy:                  v.Spec.LastAttachedBy,
 		FromBackup:                      v.Spec.FromBackup,

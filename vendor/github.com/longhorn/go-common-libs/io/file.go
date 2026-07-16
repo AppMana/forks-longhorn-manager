@@ -1,18 +1,14 @@
 package io
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/cockroachdb/errors"
-	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 
 	"github.com/longhorn/go-common-libs/types"
 )
@@ -240,37 +236,7 @@ func GetDiskStat(path string) (diskStat types.DiskStat, err error) {
 		err = errors.Wrapf(err, "failed to get fs stat for %v", path)
 	}()
 
-	var statfs unix.Statfs_t
-	if err := unix.Statfs(path, &statfs); err != nil {
-		return diskStat, err
-	}
-
-	usage, err := disk.Usage(path)
-	if err != nil {
-		return diskStat, err
-	}
-
-	// Convert the FSID components to a single uint64 FSID value
-	var fsidValue uint64
-	for _, component := range statfs.Fsid.Val {
-		// Combine components using bit manipulation
-		fsidValue = (fsidValue << 32) | uint64(uint32(component))
-	}
-
-	// Format the FSID value with leading zeros
-	fsidFormatted := fmt.Sprintf("%012x", fsidValue)
-
-	return types.DiskStat{
-		DiskID:           fsidFormatted,
-		Path:             path,
-		Type:             usage.Fstype,
-		Driver:           types.DiskDriverNone,
-		FreeBlocks:       int64(statfs.Bfree),
-		TotalBlocks:      int64(statfs.Blocks),
-		BlockSize:        int64(statfs.Bsize),
-		StorageMaximum:   int64(statfs.Blocks) * int64(statfs.Bsize),
-		StorageAvailable: int64(statfs.Bfree) * int64(statfs.Bsize),
-	}, nil
+	return getDiskStatForPath(path)
 }
 
 // ListOpenFiles returns a list of open files in the specified directory.
@@ -393,10 +359,5 @@ func CheckIsFileSizeSame(paths ...string) error {
 }
 
 func getFileBlockSizeEstimate(path string) (uint64, error) {
-	var stat syscall.Stat_t
-	if err := syscall.Stat(path, &stat); err != nil {
-		return 0, err
-	}
-
-	return uint64(stat.Blocks) * uint64(stat.Blksize), nil
+	return getFileAllocatedSize(path)
 }

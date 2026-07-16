@@ -1,0 +1,171 @@
+name: Publish Windows V1 GHCR image
+
+on:
+  push:
+    branches: [windows-v1]
+    tags: [windows-v1-*]
+  pull_request:
+    branches: [windows-v1]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Shared release-set tag (dispatch every Longhorn component with this tag)
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.image_tag || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      tag: ${{ steps.meta.outputs.tag }}
+      publish: ${{ steps.meta.outputs.publish }}
+    steps:
+      - id: meta
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag }}
+        run: |
+          set -euo pipefail
+          owner="$(tr '[:upper:]' '[:lower:]' <<< '${{ github.repository_owner }}')"
+          tag="$REQUESTED_TAG"
+          if [[ -z "$tag" && "$GITHUB_REF" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ -z "$tag" ]]; then
+            tag="windows-v1-${GITHUB_SHA:0:12}"
+          fi
+          if [[ ! "$tag" =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+            echo "Invalid OCI image tag: $tag" >&2
+            exit 1
+          fi
+          echo "image=ghcr.io/$owner/longhorn-manager" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  linux-amd64:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Login to GHCR
+        if: needs.prepare.outputs.publish == 'true'
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Linux image
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          PUBLISH: ${{ needs.prepare.outputs.publish }}
+        run: |
+          set -euo pipefail
+          output=(--load)
+          if [[ "$PUBLISH" == true ]]; then output=(--push); fi
+          docker buildx build --pull --platform linux/amd64 \
+            --provenance=false --sbom=false "${output[@]}" \
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            -t "$IMAGE:$TAG-linux-amd64" -f package/Dockerfile .
+
+  windows-amd64:
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-2022
+            base_tag: ltsc2022
+          - runner: windows-2025
+            base_tag: ltsc2025
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version-file: go.mod
+      - name: Build Windows binaries
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force bin | Out-Null
+          $env:CGO_ENABLED = '0'
+          $env:GOOS = 'windows'
+          $env:GOARCH = 'amd64'
+          $env:GOFLAGS = '-mod=vendor'
+          go build -trimpath -o bin/longhorn-manager.exe .
+          if ($LASTEXITCODE -ne 0) { throw 'longhorn-manager.exe build failed' }
+          go build -trimpath -o bin/longhorn-windows-csi.exe ./cmd/longhorn-windows-csi
+          if ($LASTEXITCODE -ne 0) { throw 'longhorn-windows-csi.exe build failed' }
+      - name: Login to GHCR
+        if: needs.prepare.outputs.publish == 'true'
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build Windows image on matching Windows Server kernel
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          docker version
+          if ($LASTEXITCODE -ne 0) { throw 'Windows Docker daemon is unavailable' }
+          $child = "$env:IMAGE`:$env:TAG-windows-${{ matrix.base_tag }}-amd64"
+          docker build --pull `
+            --build-arg WINDOWS_BASE_TAG=${{ matrix.base_tag }} `
+            --label "org.opencontainers.image.source=https://github.com/${{ github.repository }}" `
+            --label "org.opencontainers.image.revision=${{ github.sha }}" `
+            -t $child -f Dockerfile.windows .
+          if ($LASTEXITCODE -ne 0) { throw 'Windows image build failed' }
+      - name: Push Windows image
+        if: needs.prepare.outputs.publish == 'true'
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: docker push "$env:IMAGE`:$env:TAG-windows-${{ matrix.base_tag }}-amd64"
+
+  manifest:
+    needs: [prepare, linux-amd64, windows-amd64]
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+      - name: Login to GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish and verify multi-platform index
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create --tag "$IMAGE:$TAG" \
+            "$IMAGE:$TAG-linux-amd64" \
+            "$IMAGE:$TAG-windows-ltsc2022-amd64" \
+            "$IMAGE:$TAG-windows-ltsc2025-amd64"
+          raw="$(docker buildx imagetools inspect --raw "$IMAGE:$TAG")"
+          jq -e '.manifests | length == 3' <<< "$raw"
+          jq -e '[.manifests[].platform | select(.os == "linux" and .architecture == "amd64")] | length == 1' <<< "$raw"
+          jq -e '[.manifests[].platform | select(.os == "windows" and .architecture == "amd64" and (."os.version" | length > 0))] | length == 2' <<< "$raw"
+          docker buildx imagetools inspect "$IMAGE:$TAG"

@@ -16,13 +16,11 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/google/uuid"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 
 	lz4 "github.com/pierrec/lz4/v4"
 
@@ -49,17 +47,6 @@ type NopCloser struct {
 }
 
 func (NopCloser) Close() error { return nil }
-
-func fstypeToKind(fstype int64) (string, error) {
-	switch fstype {
-	case unix.NFS_SUPER_MAGIC:
-		return "nfs", nil
-	case unix.CIFS_SUPER_MAGIC, unix.SMB2_SUPER_MAGIC, unix.SMB_SUPER_MAGIC:
-		return "cifs", nil
-	default:
-		return "", fmt.Errorf("unknown fstype %v", fstype)
-	}
-}
 
 // GenerateName generates a 16-byte name
 func GenerateName(prefix string) string {
@@ -330,13 +317,7 @@ func EnsureMountPoint(Kind, mountPoint string, mounter mount.Interface, log logr
 		return false, nil
 	}
 
-	var stat syscall.Statfs_t
-
-	if err := syscall.Statfs(mountPoint, &stat); err != nil {
-		return true, errors.Wrapf(err, "failed to statfs for mount point %v", mountPoint)
-	}
-
-	kind, err := fstypeToKind(int64(stat.Type))
+	kind, err := getMountKind(mountPoint)
 	if err != nil {
 		return true, errors.Wrapf(err, "failed to get kind for mount point %v", mountPoint)
 	}

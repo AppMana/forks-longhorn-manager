@@ -165,6 +165,11 @@ func newEngineImage(image string, state longhorn.EngineImageState) *longhorn.Eng
 				},
 			},
 			NodeDeploymentMap: map[string]bool{},
+			NodeCapabilities: map[string]longhorn.EngineImageNodeCapabilities{
+				TestNode1: types.LegacyLinuxNodeCapabilities(),
+				TestNode2: types.LegacyLinuxNodeCapabilities(),
+				TestNode3: types.LegacyLinuxNodeCapabilities(),
+			},
 		},
 	}
 }
@@ -314,6 +319,25 @@ func generateSchedulerTestCase() *ReplicaSchedulerTestCase {
 
 func (s *TestSuite) TestReplicaScheduler(c *C) {
 	testCases := map[string]*ReplicaSchedulerTestCase{}
+	newCapabilityTestNode := func(name, zone string) *longhorn.Node {
+		node := newNode(name, TestNamespace, zone, true, longhorn.ConditionStatusTrue)
+		diskID := getDiskID(name, "1")
+		node.Spec.Disks = map[string]longhorn.DiskSpec{
+			diskID: newDisk(TestDefaultDataPath, true, 0),
+		}
+		node.Status.DiskStatus = map[string]*longhorn.DiskStatus{
+			diskID: {
+				StorageAvailable: TestDiskAvailableSize,
+				StorageMaximum:   TestDiskSize,
+				Conditions: []longhorn.Condition{
+					newCondition(longhorn.DiskConditionTypeSchedulable, longhorn.ConditionStatusTrue),
+				},
+				DiskUUID: diskID,
+				Type:     longhorn.DiskTypeFilesystem,
+			},
+		}
+		return node
+	}
 	// Test only node1 could schedule replica
 	tc := generateSchedulerTestCase()
 	daemon1 := newDaemonPod(corev1.PodRunning, TestDaemon1, TestNamespace, TestNode1, TestIP1)
@@ -1162,6 +1186,92 @@ func (s *TestSuite) TestReplicaScheduler(c *C) {
 	// node with less load.
 	tc = generateBestEffortAutoBalanceScheduleTestCase()
 	testCases["scheduling on the right node with \"best-effort\" auto balancing"] = tc
+
+	// Capability eligibility is a hard filter before capacity and balancing.
+	// The Windows node is otherwise eligible but does not advertise RWX, so an
+	// RWX replica must be placed on the Linux-capable node.
+	tc = generateSchedulerTestCase()
+	tc.volume.Spec.AccessMode = longhorn.AccessModeReadWriteMany
+	windowsNode := newCapabilityTestNode(TestNode1, TestZone1)
+	linuxNode := newCapabilityTestNode(TestNode2, TestZone2)
+	tc.nodes = map[string]*longhorn.Node{
+		windowsNode.Name: windowsNode,
+		linuxNode.Name:   linuxNode,
+	}
+	tc.daemons = []*corev1.Pod{
+		newDaemonPod(corev1.PodRunning, TestDaemon1, TestNamespace, windowsNode.Name, TestIP1),
+		newDaemonPod(corev1.PodRunning, TestDaemon2, TestNamespace, linuxNode.Name, TestIP2),
+	}
+	tc.engineImage.Status.NodeDeploymentMap = map[string]bool{
+		windowsNode.Name: true,
+		linuxNode.Name:   true,
+	}
+	tc.engineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{
+		windowsNode.Name: {
+			Replica: []string{
+				types.EngineCapabilityV1,
+				types.EngineCapabilityRWO,
+				types.EngineCapabilityRWOP,
+				types.EngineCapabilityBestEffort,
+			},
+		},
+		linuxNode.Name: types.LegacyLinuxNodeCapabilities(),
+	}
+	replica := newReplicaForVolume(tc.volume)
+	tc.allReplicas = map[string]*longhorn.Replica{replica.Name: replica}
+	tc.replicasToSchedule = map[string]struct{}{replica.Name: {}}
+	tc.expectedNodes = map[string]*longhorn.Node{linuxNode.Name: linuxNode}
+	tc.firstNilReplica = -1
+	testCases["RWX capability excludes Windows replica node"] = tc
+
+	// RWO keeps heterogeneous replicas eligible. The capability contract is
+	// role-specific: a Windows engine may use one Windows sparse replica and
+	// one Linux sparse replica without requiring identical host platforms.
+	tc = generateSchedulerTestCase()
+	windowsNode = newCapabilityTestNode(TestNode1, TestZone1)
+	linuxNode = newCapabilityTestNode(TestNode2, TestZone2)
+	tc.nodes = map[string]*longhorn.Node{windowsNode.Name: windowsNode, linuxNode.Name: linuxNode}
+	tc.daemons = []*corev1.Pod{
+		newDaemonPod(corev1.PodRunning, TestDaemon1, TestNamespace, windowsNode.Name, TestIP1),
+		newDaemonPod(corev1.PodRunning, TestDaemon2, TestNamespace, linuxNode.Name, TestIP2),
+	}
+	tc.engineImage.Status.NodeDeploymentMap = map[string]bool{windowsNode.Name: true, linuxNode.Name: true}
+	tc.engineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{
+		windowsNode.Name: types.WindowsV1NodeCapabilities(),
+		linuxNode.Name:   types.LegacyLinuxNodeCapabilities(),
+	}
+	tc.expectedNodes = map[string]*longhorn.Node{windowsNode.Name: windowsNode, linuxNode.Name: linuxNode}
+	tc.replicaNodeSoftAntiAffinity = "false"
+	testCases["RWO supports mixed Windows and Linux replicas"] = tc
+
+	// Strict-local cannot fall back to a remote node. If the attachment node
+	// does not advertise strict-local, scheduling fails even when the node has
+	// sufficient storage and the engine image is deployed.
+	tc = generateSchedulerTestCase()
+	tc.volume.Spec.AccessMode = longhorn.AccessModeReadWriteOnce
+	tc.volume.Spec.DataLocality = longhorn.DataLocalityStrictLocal
+	tc.volume.Spec.NodeID = TestNode1
+	windowsNode = newCapabilityTestNode(TestNode1, TestZone1)
+	tc.nodes = map[string]*longhorn.Node{windowsNode.Name: windowsNode}
+	tc.daemons = []*corev1.Pod{
+		newDaemonPod(corev1.PodRunning, TestDaemon1, TestNamespace, windowsNode.Name, TestIP1),
+	}
+	tc.engineImage.Status.NodeDeploymentMap = map[string]bool{windowsNode.Name: true}
+	tc.engineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{
+		windowsNode.Name: {
+			Replica: []string{
+				types.EngineCapabilityV1,
+				types.EngineCapabilityRWO,
+			},
+		},
+	}
+	replica = newReplicaForVolume(tc.volume)
+	replica.Spec.HardNodeAffinity = windowsNode.Name
+	tc.allReplicas = map[string]*longhorn.Replica{replica.Name: replica}
+	tc.replicasToSchedule = map[string]struct{}{replica.Name: {}}
+	tc.err = true
+	tc.firstNilReplica = 0
+	testCases["strict-local capability cannot fall back from Windows"] = tc
 
 	for name, tc := range testCases {
 		fmt.Printf("testing %v\n", name)

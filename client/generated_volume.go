@@ -127,6 +127,8 @@ type Volume struct {
 
 	UnmapMarkSnapChainRemoved string `json:"unmapMarkSnapChainRemoved,omitempty" yaml:"unmap_mark_snap_chain_removed,omitempty"`
 
+	WorkloadFileSystem string `json:"workloadFileSystem,omitempty" yaml:"workload_file_system,omitempty"`
+
 	VolumeAttachment VolumeAttachment `json:"volumeAttachment,omitempty" yaml:"volume_attachment,omitempty"`
 }
 

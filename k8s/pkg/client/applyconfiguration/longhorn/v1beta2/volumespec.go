@@ -29,6 +29,10 @@ import (
 type VolumeSpecApplyConfiguration struct {
 	Size     *int64                          `json:"size,omitempty"`
 	Frontend *longhornv1beta2.VolumeFrontend `json:"frontend,omitempty"`
+	// WorkloadFileSystem is the normalized filesystem requested through CSI.
+	// It is persisted so attachment capability checks do not have to infer the
+	// filesystem from a StorageClass or PersistentVolume after provisioning.
+	WorkloadFileSystem *string `json:"workloadFileSystem,omitempty"`
 	// ublkQueueDepth controls the depth of each queue for ublk frontend.
 	UblkQueueDepth *int `json:"ublkQueueDepth,omitempty"`
 	// ublkNumberOfQueue controls the number of queues for ublk frontend.
@@ -115,6 +119,14 @@ func (b *VolumeSpecApplyConfiguration) WithSize(value int64) *VolumeSpecApplyCon
 // If called multiple times, the Frontend field is set to the value of the last call.
 func (b *VolumeSpecApplyConfiguration) WithFrontend(value longhornv1beta2.VolumeFrontend) *VolumeSpecApplyConfiguration {
 	b.Frontend = &value
+	return b
+}
+
+// WithWorkloadFileSystem sets the WorkloadFileSystem field in the declarative configuration to the given value
+// and returns the receiver, so that objects can be built by chaining "With" function invocations.
+// If called multiple times, the WorkloadFileSystem field is set to the value of the last call.
+func (b *VolumeSpecApplyConfiguration) WithWorkloadFileSystem(value string) *VolumeSpecApplyConfiguration {
+	b.WorkloadFileSystem = &value
 	return b
 }
 

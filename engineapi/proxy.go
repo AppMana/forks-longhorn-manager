@@ -7,6 +7,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
 
+	emeta "github.com/longhorn/longhorn-engine/pkg/meta"
 	imclient "github.com/longhorn/longhorn-instance-manager/pkg/client"
 
 	"github.com/longhorn/longhorn-manager/datastore"
@@ -190,7 +191,7 @@ func (p *Proxy) DirectToURL(obj DataEngineObject) string {
 
 func (p *Proxy) VersionGet(obj DataEngineObject, clientOnly bool) (version *EngineVersion, err error) {
 	recvClientVersion := p.grpcClient.ClientVersionGet()
-	clientVersion := (*longhorn.EngineVersionDetails)(&recvClientVersion)
+	clientVersion := engineVersionDetailsFromMeta(&recvClientVersion)
 
 	if clientOnly {
 		return &EngineVersion{
@@ -205,6 +206,23 @@ func (p *Proxy) VersionGet(obj DataEngineObject, clientOnly bool) (version *Engi
 
 	return &EngineVersion{
 		ClientVersion: clientVersion,
-		ServerVersion: (*longhorn.EngineVersionDetails)(recvServerVersion),
+		ServerVersion: engineVersionDetailsFromMeta(recvServerVersion),
 	}, nil
+}
+
+func engineVersionDetailsFromMeta(version *emeta.VersionOutput) *longhorn.EngineVersionDetails {
+	if version == nil {
+		return nil
+	}
+	return &longhorn.EngineVersionDetails{
+		Version:                 version.Version,
+		GitCommit:               version.GitCommit,
+		BuildDate:               version.BuildDate,
+		CLIAPIVersion:           version.CLIAPIVersion,
+		CLIAPIMinVersion:        version.CLIAPIMinVersion,
+		ControllerAPIVersion:    version.ControllerAPIVersion,
+		ControllerAPIMinVersion: version.ControllerAPIMinVersion,
+		DataFormatVersion:       version.DataFormatVersion,
+		DataFormatMinVersion:    version.DataFormatMinVersion,
+	}
 }

@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
 
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -39,6 +41,8 @@ var (
 
 	ExpiredEngineImageTimeout = 60 * time.Minute
 )
+
+const windowsEngineImageLabel = "longhorn.io/windows-engine-image"
 
 type EngineImageController struct {
 	*baseController
@@ -292,12 +296,19 @@ func (ic *EngineImageController) syncEngineImage(key string) (err error) {
 		if err = ic.ds.CreateEngineImageDaemonSet(dsSpec); err != nil {
 			return errors.Wrapf(err, "failed to create daemonset for engine image %v", engineImage.Name)
 		}
+		if err := ic.ensureWindowsEngineImageDaemonSet(engineImage, tolerations, priorityClass, registrySecret, imagePullPolicy, nodeSelector); err != nil {
+			return err
+		}
 
 		engineImage.Status.Conditions = types.SetCondition(engineImage.Status.Conditions,
 			longhorn.EngineImageConditionTypeReady, longhorn.ConditionStatusFalse,
 			longhorn.EngineImageConditionTypeReadyReasonDaemonSet, fmt.Sprintf("creating daemon set %v for %v", dsSpec.Name, engineImage.Spec.Image))
 		engineImage.Status.State = longhorn.EngineImageStateDeploying
 		return nil
+	}
+	if err := ic.ensureWindowsEngineImageDaemonSet(engineImage, ds.Spec.Template.Spec.Tolerations, ds.Spec.Template.Spec.PriorityClassName,
+		registrySecretFromPodSpec(ds.Spec.Template.Spec), ds.Spec.Template.Spec.Containers[0].ImagePullPolicy, nodeSelectorFromPodSpec(ds.Spec.Template.Spec)); err != nil {
+		return err
 	}
 
 	// TODO: Will remove this reference kind correcting after all Longhorn components having used the new kinds
@@ -350,7 +361,21 @@ func (ic *EngineImageController) syncEngineImage(key string) (err error) {
 		return err
 	}
 
-	if deployedNodeCount < len(readyNodes) {
+	requiredDeploymentCount := 0
+	for nodeName := range readyNodes {
+		kubeNode, err := ic.ds.GetKubernetesNodeRO(nodeName)
+		if err != nil {
+			return err
+		}
+		// A legacy Linux-only image must remain usable in a mixed cluster. A
+		// Windows node becomes part of the image-wide readiness count only after
+		// its platform image has actually deployed; per-node readiness remains
+		// fail-closed through NodeDeploymentMap and NodeCapabilities.
+		if kubeNode.Labels[corev1.LabelOSStable] != "windows" || engineImage.Status.NodeDeploymentMap[nodeName] {
+			requiredDeploymentCount++
+		}
+	}
+	if deployedNodeCount < requiredDeploymentCount {
 		engineImage.Status.Conditions = types.SetCondition(engineImage.Status.Conditions, longhorn.EngineImageConditionTypeReady, longhorn.ConditionStatusFalse,
 			longhorn.EngineImageConditionTypeReadyReasonDaemonSet, fmt.Sprintf("Engine image is not fully deployed on all nodes: %v of %v", deployedNodeCount, len(engineImage.Status.NodeDeploymentMap)))
 		engineImage.Status.State = longhorn.EngineImageStateDeploying
@@ -391,6 +416,20 @@ func (ic *EngineImageController) syncNodeDeploymentMap(engineImage *longhorn.Eng
 	if err != nil {
 		return err
 	}
+	windowsPods, err := ic.kubeClient.CoreV1().Pods(ic.namespace).List(context.TODO(), metav1.ListOptions{
+		LabelSelector: labels.Set{windowsEngineImageLabel: engineImage.Name}.String(),
+	})
+	if err != nil {
+		return err
+	}
+	for i := range windowsPods.Items {
+		pod := &windowsPods.Items[i]
+		allContainerReady := len(pod.Status.ContainerStatuses) > 0
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			allContainerReady = allContainerReady && containerStatus.Ready
+		}
+		nodeDeploymentMap[pod.Spec.NodeName] = allContainerReady
+	}
 	for _, pod := range eiDaemonSetPods {
 		allContainerReady := true
 		for _, containerStatus := range pod.Status.ContainerStatuses {
@@ -400,6 +439,21 @@ func (ic *EngineImageController) syncNodeDeploymentMap(engineImage *longhorn.Eng
 	}
 
 	engineImage.Status.NodeDeploymentMap = nodeDeploymentMap
+	engineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{}
+	for nodeName, deployed := range nodeDeploymentMap {
+		if !deployed {
+			continue
+		}
+		kubeNode, err := ic.ds.GetKubernetesNodeRO(nodeName)
+		if err != nil {
+			return err
+		}
+		if kubeNode.Labels[corev1.LabelOSStable] == "windows" {
+			engineImage.Status.NodeCapabilities[nodeName] = types.WindowsV1NodeCapabilities()
+		} else {
+			engineImage.Status.NodeCapabilities[nodeName] = types.LegacyLinuxNodeCapabilities()
+		}
+	}
 
 	return nil
 }
@@ -796,6 +850,8 @@ func (ic *EngineImageController) createEngineImageDaemonSetSpec(ei *longhorn.Eng
 		return nil, err
 	}
 
+	linuxNodeSelector := cloneStringMap(nodeSelector)
+	linuxNodeSelector[corev1.LabelOSStable] = "linux"
 	d := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        dsName,
@@ -820,7 +876,7 @@ func (ic *EngineImageController) createEngineImageDaemonSetSpec(ei *longhorn.Eng
 				Spec: corev1.PodSpec{
 					ServiceAccountName: ic.serviceAccount,
 					Tolerations:        tolerations,
-					NodeSelector:       nodeSelector,
+					NodeSelector:       linuxNodeSelector,
 					PriorityClassName:  priorityClass,
 					Containers: []corev1.Container{
 						{
@@ -893,6 +949,118 @@ func (ic *EngineImageController) createEngineImageDaemonSetSpec(ei *longhorn.Eng
 	types.AddGoCoverDirToDaemonSet(d)
 
 	return d, nil
+}
+
+func (ic *EngineImageController) ensureWindowsEngineImageDaemonSet(ei *longhorn.EngineImage, tolerations []corev1.Toleration,
+	priorityClass, registrySecret string, imagePullPolicy corev1.PullPolicy, nodeSelector map[string]string) error {
+	name := windowsEngineImageDaemonSetName(types.GetDaemonSetNameFromEngineImageName(ei.Name))
+	_, err := ic.kubeClient.AppsV1().DaemonSets(ic.namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	if err == nil {
+		return nil
+	}
+	if !apierrors.IsNotFound(err) {
+		return err
+	}
+	daemonSet := ic.createWindowsEngineImageDaemonSetSpec(ei, name, tolerations, priorityClass, registrySecret, imagePullPolicy, nodeSelector)
+	_, err = ic.kubeClient.AppsV1().DaemonSets(ic.namespace).Create(context.TODO(), daemonSet, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		return nil
+	}
+	return errors.Wrapf(err, "create Windows engine image daemonset %s", name)
+}
+
+func (ic *EngineImageController) createWindowsEngineImageDaemonSetSpec(ei *longhorn.EngineImage, name string,
+	tolerations []corev1.Toleration, priorityClass, registrySecret string, imagePullPolicy corev1.PullPolicy,
+	nodeSelector map[string]string) *appsv1.DaemonSet {
+	selector := map[string]string{windowsEngineImageLabel: ei.Name}
+	windowsNodeSelector := cloneStringMap(nodeSelector)
+	windowsNodeSelector[corev1.LabelOSStable] = "windows"
+	hostProcess := true
+	runAs := `NT AUTHORITY\SYSTEM`
+	hostDirectory := windowsEngineBinaryDirectory(ei.Spec.Image)
+	script := strings.Join([]string{
+		`$ErrorActionPreference = 'Stop'`,
+		`New-Item -ItemType Directory -Force -Path C:\data | Out-Null`,
+		`Copy-Item -Force C:\usr\local\bin\longhorn.exe C:\data\longhorn.exe`,
+		`try { while ($true) { Start-Sleep -Seconds 3600 } } finally { Remove-Item -Force -ErrorAction SilentlyContinue C:\data\longhorn.exe }`,
+	}, "; ")
+	probe := []string{"powershell.exe", "-NoLogo", "-NonInteractive", "-Command",
+		`$productType=(Get-CimInstance Win32_OperatingSystem).ProductType; $iscsi=(Get-Service MSiSCSI).Status; if (($productType -in 2,3) -and ($iscsi -eq 'Running') -and (Test-Path C:\data\longhorn.exe) -and (& C:\data\longhorn.exe version --client-only)) { exit 0 }; exit 1`}
+	maxUnavailable := intstr.FromString("100%")
+
+	daemonSet := &appsv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: name, OwnerReferences: datastore.GetOwnerReferencesForEngineImage(ei)},
+		Spec: appsv1.DaemonSetSpec{
+			Selector: &metav1.LabelSelector{MatchLabels: selector},
+			UpdateStrategy: appsv1.DaemonSetUpdateStrategy{Type: appsv1.RollingUpdateDaemonSetStrategyType,
+				RollingUpdate: &appsv1.RollingUpdateDaemonSet{MaxUnavailable: &maxUnavailable}},
+			Template: corev1.PodTemplateSpec{
+				ObjectMeta: metav1.ObjectMeta{Labels: selector, OwnerReferences: datastore.GetOwnerReferencesForEngineImage(ei)},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: ic.serviceAccount,
+					HostNetwork:        true,
+					NodeSelector:       windowsNodeSelector,
+					Tolerations:        tolerations,
+					PriorityClassName:  priorityClass,
+					SecurityContext: &corev1.PodSecurityContext{WindowsOptions: &corev1.WindowsSecurityContextOptions{
+						HostProcess: &hostProcess, RunAsUserName: &runAs,
+					}},
+					Containers: []corev1.Container{{
+						Name: name, Image: ei.Spec.Image, ImagePullPolicy: imagePullPolicy,
+						Command: []string{"powershell.exe", "-NoLogo", "-NonInteractive", "-Command"}, Args: []string{script},
+						SecurityContext: &corev1.SecurityContext{WindowsOptions: &corev1.WindowsSecurityContextOptions{
+							HostProcess: &hostProcess, RunAsUserName: &runAs,
+						}},
+						VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: `C:\data`}},
+						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: probe}},
+							InitialDelaySeconds: datastore.PodProbeInitialDelay, TimeoutSeconds: datastore.PodProbeTimeoutSeconds,
+							PeriodSeconds: datastore.PodProbePeriodSeconds, FailureThreshold: datastore.PodLivenessProbeFailureThreshold},
+						LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: probe}},
+							InitialDelaySeconds: datastore.PodProbeInitialDelay, TimeoutSeconds: datastore.PodProbeTimeoutSeconds,
+							PeriodSeconds: datastore.PodProbePeriodSeconds, FailureThreshold: datastore.PodLivenessProbeFailureThreshold},
+					}},
+					Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: hostDirectory}}}},
+				},
+			},
+		},
+	}
+	if registrySecret != "" {
+		daemonSet.Spec.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: registrySecret}}
+	}
+	return daemonSet
+}
+
+func windowsEngineImageDaemonSetName(linuxName string) string {
+	const suffix = "-windows"
+	if len(linuxName)+len(suffix) > 63 {
+		linuxName = strings.TrimRight(linuxName[:63-len(suffix)], "-")
+	}
+	return linuxName + suffix
+}
+
+func windowsEngineBinaryDirectory(image string) string {
+	return `C:\var\lib\longhorn\engine-binaries\` + types.GetImageCanonicalName(image)
+}
+
+func cloneStringMap(source map[string]string) map[string]string {
+	result := make(map[string]string, len(source)+1)
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func registrySecretFromPodSpec(spec corev1.PodSpec) string {
+	if len(spec.ImagePullSecrets) == 0 {
+		return ""
+	}
+	return spec.ImagePullSecrets[0].Name
+}
+
+func nodeSelectorFromPodSpec(spec corev1.PodSpec) map[string]string {
+	selector := cloneStringMap(spec.NodeSelector)
+	delete(selector, corev1.LabelOSStable)
+	return selector
 }
 
 func (ic *EngineImageController) getEngineImagePodLivenessProbeParameters() (periodSeconds, timeoutSeconds, failureThreshold int32) {

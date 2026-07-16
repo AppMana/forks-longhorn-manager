@@ -1114,6 +1114,21 @@ func (nc *NodeController) syncInstanceManagers(node *longhorn.Node) error {
 	}
 
 	imTypeDataEngines := nc.getImTypeDataEngines(node)
+	kubeNode, err := nc.ds.GetKubernetesNodeRO(node.Name)
+	if err != nil {
+		return errors.Wrapf(err, "failed to get kubernetes node %v before syncing instance managers", node.Name)
+	}
+	if isWindowsKubernetesNode(kubeNode) {
+		for imType, dataEngines := range imTypeDataEngines {
+			v1Only := dataEngines[:0]
+			for _, dataEngine := range dataEngines {
+				if types.IsDataEngineV1(dataEngine) {
+					v1Only = append(v1Only, dataEngine)
+				}
+			}
+			imTypeDataEngines[imType] = v1Only
+		}
+	}
 
 	for imType, dataEngines := range imTypeDataEngines {
 		for _, dataEngine := range dataEngines {

@@ -2411,6 +2411,9 @@ func (c *VolumeController) openVolumeDependentResources(v *longhorn.Volume, e *l
 		log.Info("Waiting for offline volume upgrade to finish")
 		return nil
 	}
+	if err := c.validateVolumeRuntimeCapabilities(v, e, rs); err != nil {
+		return err
+	}
 
 	for _, r := range rs {
 		// Don't attempt to start the replica or do anything else if it hasn't been scheduled.
@@ -2574,6 +2577,39 @@ func (c *VolumeController) openVolumeDependentResources(v *longhorn.Volume, e *l
 		}
 	}
 
+	return nil
+}
+
+func (c *VolumeController) validateVolumeRuntimeCapabilities(v *longhorn.Volume, e *longhorn.Engine, rs map[string]*longhorn.Replica) error {
+	if types.IsDataEngineV2(v.Spec.DataEngine) {
+		return nil
+	}
+	image := v.Status.CurrentImage
+	if image == "" {
+		image = v.Spec.Image
+	}
+	requirements := types.ResolveVolumeRequirements(v)
+	engineNode := v.Spec.NodeID
+	if e != nil && e.Spec.NodeID != "" {
+		engineNode = e.Spec.NodeID
+	}
+	if err := c.checkEngineImageNodeCapabilities(image, engineNode, "controller", requirements.Controller); err != nil {
+		return err
+	}
+	if err := c.checkEngineImageNodeCapabilities(image, v.Spec.NodeID, "frontend", requirements.Frontend); err != nil {
+		return err
+	}
+	for _, replica := range rs {
+		if replica.Spec.NodeID == "" || replica.Spec.FailedAt != "" {
+			continue
+		}
+		if err := c.checkEngineImageNodeCapabilities(image, replica.Spec.NodeID, "replica", requirements.Replica); err != nil {
+			return err
+		}
+		if err := c.checkEngineImageNodeCapabilities(image, replica.Spec.NodeID, "disk", requirements.Disk); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -4020,16 +4056,20 @@ func (c *VolumeController) upgradeEngineForVolume(v *longhorn.Volume, es map[str
 		return nil
 	}
 
-	volumeAndReplicaNodes := []string{v.Status.CurrentNodeID}
+	engineNodeID := v.Status.CurrentEngineNodeID
+	if engineNodeID == "" {
+		engineNodeID = v.Status.CurrentNodeID
+	}
+	replicaNodes := []string{}
 	for _, r := range rs {
 		if r.Spec.NodeID == "" {
 			continue
 		}
-		volumeAndReplicaNodes = append(volumeAndReplicaNodes, r.Spec.NodeID)
+		replicaNodes = append(replicaNodes, r.Spec.NodeID)
 	}
 
 	if types.IsDataEngineV1(v.Spec.DataEngine) {
-		if err := c.checkOldAndNewEngineImagesForLiveUpgrade(v, volumeAndReplicaNodes...); err != nil {
+		if err := c.checkOldAndNewEngineImagesForLiveUpgrade(v, v.Status.CurrentNodeID, engineNodeID, replicaNodes); err != nil {
 			log.Warnf("%v", err)
 			return nil
 		}
@@ -4133,7 +4173,8 @@ func (c *VolumeController) groupReplicasByImageAndState(v *longhorn.Volume, e *l
 	return unknownReplicas, dataPathToOldRunningReplica, dataPathToNewReplica
 }
 
-func (c *VolumeController) checkOldAndNewEngineImagesForLiveUpgrade(v *longhorn.Volume, nodes ...string) error {
+func (c *VolumeController) checkOldAndNewEngineImagesForLiveUpgrade(v *longhorn.Volume, frontendNode, engineNode string, replicaNodes []string) error {
+	nodes := append([]string{frontendNode, engineNode}, replicaNodes...)
 	oldImage, err := c.getEngineImageRO(v.Status.CurrentImage)
 	if err != nil {
 		return errors.Wrapf(err, "failed to get engine image %v for live upgrade", v.Status.CurrentImage)
@@ -4150,6 +4191,24 @@ func (c *VolumeController) checkOldAndNewEngineImagesForLiveUpgrade(v *longhorn.
 		return errors.Wrapf(err, "engine live upgrade to %v, but the image wasn't ready", newImage.Spec.Image)
 	}
 
+	requirements := types.ResolveVolumeRequirements(v)
+	for _, image := range []*longhorn.EngineImage{oldImage, newImage} {
+		if err := c.checkEngineImageNodeCapabilities(image.Spec.Image, engineNode, "controller", requirements.Controller); err != nil {
+			return errors.Wrapf(err, "engine image %v cannot serve volume %v", image.Spec.Image, v.Name)
+		}
+		if err := c.checkEngineImageNodeCapabilities(image.Spec.Image, frontendNode, "frontend", requirements.Frontend); err != nil {
+			return errors.Wrapf(err, "engine image %v cannot publish volume %v", image.Spec.Image, v.Name)
+		}
+		for _, replicaNode := range replicaNodes {
+			if err := c.checkEngineImageNodeCapabilities(image.Spec.Image, replicaNode, "replica", requirements.Replica); err != nil {
+				return errors.Wrapf(err, "engine image %v cannot run a replica for volume %v on node %v", image.Spec.Image, v.Name, replicaNode)
+			}
+			if err := c.checkEngineImageNodeCapabilities(image.Spec.Image, replicaNode, "disk", requirements.Disk); err != nil {
+				return errors.Wrapf(err, "engine image %v cannot store a replica for volume %v on node %v", image.Spec.Image, v.Name, replicaNode)
+			}
+		}
+	}
+
 	if oldImage.Status.GitCommit == newImage.Status.GitCommit && !isRevisionedEngineImage(newImage.Spec.Image) {
 		return fmt.Errorf("engine image %v and %v are identical, delay upgrade until detach for volume", oldImage.Spec.Image, newImage.Spec.Image)
 	}
@@ -4162,6 +4221,33 @@ func (c *VolumeController) checkOldAndNewEngineImagesForLiveUpgrade(v *longhorn.
 			oldImage.Status.ControllerAPIVersion, newImage.Status.ControllerAPIVersion, newImage.Status.ControllerAPIMinVersion)
 	}
 
+	return nil
+}
+
+func (c *VolumeController) checkEngineImageNodeCapabilities(image, node, role string, required []string) error {
+	if node == "" || len(required) == 0 {
+		return nil
+	}
+	capabilities, err := c.ds.GetEngineImageNodeCapabilities(image, node)
+	if err != nil {
+		return err
+	}
+	var advertised []string
+	switch role {
+	case "controller":
+		advertised = capabilities.Controller
+	case "replica":
+		advertised = capabilities.Replica
+	case "frontend":
+		advertised = capabilities.Frontend
+	case "disk":
+		advertised = capabilities.Disk
+	default:
+		return fmt.Errorf("unknown capability role %q", role)
+	}
+	if missing := types.MissingCapabilities(advertised, required); len(missing) > 0 {
+		return fmt.Errorf("node %v: %v", node, types.FormatMissingCapabilities(role, missing))
+	}
 	return nil
 }
 

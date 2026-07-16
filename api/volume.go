@@ -199,6 +199,7 @@ func (s *Server) VolumeCreate(rw http.ResponseWriter, req *http.Request) error {
 		Migratable:                      volume.Migratable,
 		Encrypted:                       volume.Encrypted,
 		Frontend:                        volume.Frontend,
+		WorkloadFileSystem:              volume.WorkloadFileSystem,
 		FromBackup:                      volume.FromBackup,
 		RestoreVolumeRecurringJob:       volume.RestoreVolumeRecurringJob,
 		DataSource:                      volume.DataSource,

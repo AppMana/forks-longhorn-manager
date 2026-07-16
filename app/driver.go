@@ -1,3 +1,5 @@
+//go:build !windows
+
 package app
 
 import (
@@ -27,8 +29,6 @@ import (
 
 const (
 	EnvKubeletRootDir = "KUBELET_ROOT_DIR"
-
-	FlagManagerURL = "manager-url"
 
 	FlagKubeletRootDir = "kubelet-root-dir"
 

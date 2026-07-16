@@ -46,7 +46,6 @@ import (
 	lhio "github.com/longhorn/go-common-libs/io"
 	lhns "github.com/longhorn/go-common-libs/ns"
 	lhtypes "github.com/longhorn/go-common-libs/types"
-	lhspdkutil "github.com/longhorn/go-spdk-helper/pkg/util"
 
 	longhorn "github.com/longhorn/longhorn-manager/k8s/pkg/apis/longhorn/v1beta2"
 )
@@ -987,21 +986,7 @@ func isUnmountedError(err error) bool {
 }
 
 func RemoveDMDevice(devicePath string) error {
-	namespaces := []lhtypes.Namespace{lhtypes.NamespaceMnt, lhtypes.NamespaceIpc}
-	nsexec, err := lhns.NewNamespaceExecutor(lhtypes.ProcessNone, lhtypes.HostProcDirectory, namespaces)
-	if err != nil {
-		return err
-	}
-
-	if err := lhspdkutil.DmsetupRemove(devicePath, true, true, nsexec); err != nil {
-		if isIgnorableDMRemoveError(err) {
-			logrus.WithError(err).Debugf("Dm device %s is already removed.", devicePath)
-			return nil
-		}
-		return err
-	}
-
-	return nil
+	return removeDMDevice(devicePath)
 }
 
 func isIgnorableDMRemoveError(err error) bool {

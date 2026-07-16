@@ -12,7 +12,6 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 	"golang.org/x/time/rate"
 
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -631,7 +630,7 @@ func (c *SystemRolloutController) cacheResourcesFromDirectory(name string, schem
 
 	files, err := os.ReadDir(name)
 	if err != nil {
-		if errors.Is(err, unix.ENOENT) {
+		if os.IsNotExist(err) {
 			return nil
 		}
 

@@ -1849,6 +1849,13 @@ func (imc *InstanceManagerController) getLogPath() (string, error) {
 
 func (imc *InstanceManagerController) createInstanceManagerPodSpec(im *longhorn.InstanceManager, tolerations []corev1.Toleration, registrySecret string, nodeSelector map[string]string, dataEngine longhorn.DataEngineType) (*corev1.Pod, error) {
 	var err error
+	kubeNode, err := imc.ds.GetKubernetesNodeRO(im.Spec.NodeID)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get kubernetes node %v for instance manager pod", im.Spec.NodeID)
+	}
+	if isWindowsKubernetesNode(kubeNode) {
+		return imc.createWindowsInstanceManagerPodSpec(im, tolerations, registrySecret, nodeSelector, dataEngine)
+	}
 
 	logPath, err := imc.getLogPath()
 	if err != nil {
@@ -2110,6 +2117,71 @@ func (imc *InstanceManagerController) createInstanceManagerPodSpec(im *longhorn.
 	}
 	types.AddGoCoverDirToPod(podSpec)
 
+	return podSpec, nil
+}
+
+func isWindowsKubernetesNode(node *corev1.Node) bool {
+	operatingSystem := node.Status.NodeInfo.OperatingSystem
+	if value := node.Labels[corev1.LabelOSStable]; value != "" {
+		operatingSystem = value
+	}
+	return strings.EqualFold(operatingSystem, "windows")
+}
+
+// createWindowsInstanceManagerPodSpec retains the same per-node instance manager
+// and per-volume child process model as Linux. Only the pod/host integration is
+// specialized for a Windows HostProcess container.
+func (imc *InstanceManagerController) createWindowsInstanceManagerPodSpec(im *longhorn.InstanceManager,
+	tolerations []corev1.Toleration, registrySecret string, nodeSelector map[string]string,
+	dataEngine longhorn.DataEngineType) (*corev1.Pod, error) {
+	if !types.IsDataEngineV1(dataEngine) {
+		return nil, fmt.Errorf("Windows instance managers support the V1 data engine only")
+	}
+
+	podSpec, err := imc.createGenericManagerPodSpec(im, tolerations, registrySecret, nodeSelector, dataEngine)
+	if err != nil {
+		return nil, err
+	}
+	container := &podSpec.Spec.Containers[0]
+	hostProcess := true
+	runAs := `NT AUTHORITY\SYSTEM`
+	windowsOptions := &corev1.WindowsSecurityContextOptions{HostProcess: &hostProcess, RunAsUserName: &runAs}
+
+	podSpec.Spec.HostNetwork = true
+	podSpec.Spec.NodeSelector = cloneStringMap(nodeSelector)
+	podSpec.Spec.NodeSelector[corev1.LabelOSStable] = "windows"
+	podSpec.Spec.SecurityContext = &corev1.PodSecurityContext{WindowsOptions: windowsOptions.DeepCopy()}
+	container.SecurityContext = &corev1.SecurityContext{WindowsOptions: windowsOptions.DeepCopy()}
+	container.Command = []string{`C:\usr\local\bin\longhorn-instance-manager.exe`}
+	container.Args = []string{"--debug", "daemon", "--listen", fmt.Sprintf(":%d", engineapi.InstanceManagerProcessManagerServiceDefaultPort)}
+	container.Env = []corev1.EnvVar{
+		{Name: "TLS_DIR", Value: `C:\var\lib\longhorn\tls`},
+		{Name: types.EnvPodIP, ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},
+		{Name: types.EnvDataEngine, Value: string(dataEngine)},
+	}
+	if tz := os.Getenv(types.EnvTZ); tz != "" {
+		container.Env = append(container.Env, corev1.EnvVar{Name: types.EnvTZ, Value: tz})
+	}
+	container.LivenessProbe = &corev1.Probe{
+		ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(engineapi.InstanceManagerProcessManagerServiceDefaultPort)}},
+		InitialDelaySeconds: datastore.IMPodProbeInitialDelay,
+		TimeoutSeconds:      datastore.PodProbeTimeoutSeconds,
+		PeriodSeconds:       datastore.PodProbePeriodSeconds,
+		FailureThreshold:    datastore.IMPodLivenessProbeFailureThreshold,
+	}
+	container.VolumeMounts = []corev1.VolumeMount{
+		{Name: "engine-binaries", MountPath: `C:\var\lib\longhorn\engine-binaries`},
+		{Name: "metadata", MountPath: `C:\var\lib\longhorn\metadata`},
+		{Name: "longhorn-grpc-tls", MountPath: `C:\var\lib\longhorn\tls`, ReadOnly: true},
+		{Name: "log", MountPath: `C:\var\lib\longhorn\logs`},
+	}
+	directoryOrCreate := corev1.HostPathDirectoryOrCreate
+	podSpec.Spec.Volumes = []corev1.Volume{
+		{Name: "engine-binaries", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: `C:\var\lib\longhorn\engine-binaries`, Type: &directoryOrCreate}}},
+		{Name: "metadata", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: `C:\var\lib\longhorn\metadata`, Type: &directoryOrCreate}}},
+		{Name: "longhorn-grpc-tls", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: types.TLSSecretName, Optional: ptr.To(true)}}},
+		{Name: "log", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: `C:\var\lib\longhorn\logs`, Type: &directoryOrCreate}}},
+	}
 	return podSpec, nil
 }
 

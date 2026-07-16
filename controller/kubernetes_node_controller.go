@@ -304,6 +304,7 @@ func (knc *KubernetesNodeController) syncDefaultDisks(node *longhorn.Node) (err 
 		if err != nil {
 			return err
 		}
+		dataPath = types.ResolveDefaultDataPath(dataPath)
 		disks, err = types.CreateDefaultDisk(dataPath, storageReservedPercentageForDefaultDisk)
 		if err != nil {
 			return err

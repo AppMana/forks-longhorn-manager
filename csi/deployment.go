@@ -296,6 +296,11 @@ type PluginDeployment struct {
 func NewPluginDeployment(namespace, serviceAccount, nodeDriverRegistrarImage, livenessProbeImage, managerImage, managerURL, rootDir string,
 	tolerations []corev1.Toleration, tolerationsString, priorityClass, registrySecret string, imagePullPolicy corev1.PullPolicy, nodeSelector map[string]string,
 	endpointNetworkForRWXVolumeSetting *longhorn.Setting, resourceLimits *types.ComponentResourceLimits) *PluginDeployment {
+	linuxNodeSelector := make(map[string]string, len(nodeSelector)+1)
+	for key, value := range nodeSelector {
+		linuxNodeSelector[key] = value
+	}
+	linuxNodeSelector[corev1.LabelOSStable] = "linux"
 
 	daemonSet := &appsv1.DaemonSet{
 		ObjectMeta: metav1.ObjectMeta{
@@ -329,7 +334,7 @@ func NewPluginDeployment(namespace, serviceAccount, nodeDriverRegistrarImage, li
 				Spec: corev1.PodSpec{
 					ServiceAccountName: serviceAccount,
 					Tolerations:        tolerations,
-					NodeSelector:       nodeSelector,
+					NodeSelector:       linuxNodeSelector,
 					PriorityClassName:  priorityClass,
 					Containers: []corev1.Container{
 						{

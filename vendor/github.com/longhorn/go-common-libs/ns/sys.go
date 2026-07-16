@@ -1,8 +1,6 @@
 package ns
 
 import (
-	"syscall"
-
 	"github.com/cockroachdb/errors"
 
 	"github.com/longhorn/go-common-libs/io"
@@ -91,8 +89,7 @@ func Sync() (err error) {
 	}()
 
 	fn := func() (interface{}, error) {
-		syscall.Sync()
-		return nil, nil
+		return nil, syncFilesystem()
 	}
 
 	_, err = RunFunc(fn, 0)

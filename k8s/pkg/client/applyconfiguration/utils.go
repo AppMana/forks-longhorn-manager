@@ -110,6 +110,8 @@ func ForKind(kind schema.GroupVersionKind) interface{} {
 		return &longhornv1beta2.EngineFrontendStatusApplyConfiguration{}
 	case v1beta2.SchemeGroupVersion.WithKind("EngineImage"):
 		return &longhornv1beta2.EngineImageApplyConfiguration{}
+	case v1beta2.SchemeGroupVersion.WithKind("EngineImageNodeCapabilities"):
+		return &longhornv1beta2.EngineImageNodeCapabilitiesApplyConfiguration{}
 	case v1beta2.SchemeGroupVersion.WithKind("EngineImageSpec"):
 		return &longhornv1beta2.EngineImageSpecApplyConfiguration{}
 	case v1beta2.SchemeGroupVersion.WithKind("EngineImageStatus"):

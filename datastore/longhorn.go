@@ -2776,6 +2776,33 @@ func (s *DataStore) CheckDataEngineImageReadiness(image string, dataEngine longh
 	return s.CheckEngineImageReadiness(image, nodes...)
 }
 
+// GetEngineImageNodeCapabilities returns the capabilities advertised by the
+// platform-specific engine image installed on nodeName. Older Linux images use
+// their established behavior as a rolling-upgrade fallback. Windows is always
+// explicit and fail-closed.
+func (s *DataStore) GetEngineImageNodeCapabilities(image, nodeName string) (longhorn.EngineImageNodeCapabilities, error) {
+	engineImage, err := s.GetEngineImageRO(types.GetEngineImageChecksumName(image))
+	if err != nil {
+		return longhorn.EngineImageNodeCapabilities{}, err
+	}
+	if capabilities, ok := engineImage.Status.NodeCapabilities[nodeName]; ok {
+		return capabilities, nil
+	}
+
+	kubeNode, err := s.GetKubernetesNodeRO(nodeName)
+	if err != nil {
+		return longhorn.EngineImageNodeCapabilities{}, err
+	}
+	operatingSystem := kubeNode.Status.NodeInfo.OperatingSystem
+	if value := kubeNode.Labels[corev1.LabelOSStable]; value != "" {
+		operatingSystem = value
+	}
+	if strings.EqualFold(operatingSystem, "windows") {
+		return longhorn.EngineImageNodeCapabilities{}, nil
+	}
+	return types.LegacyLinuxNodeCapabilities(), nil
+}
+
 // IsDataEngineImageReady checks if the IMAGE is deployed on the NODEID and, if data locality is disabled, also on at least one replica node of the volume.
 func (s *DataStore) IsDataEngineImageReady(image, volumeName, nodeID string, dataLocality longhorn.DataLocality, dataEngine longhorn.DataEngineType) (bool, error) {
 	isReady, err := s.CheckDataEngineImageReadiness(image, dataEngine, nodeID)
@@ -3384,6 +3411,7 @@ func (s *DataStore) CreateDefaultNode(name string) (*longhorn.Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		dataPath = types.ResolveDefaultDataPath(dataPath)
 		storageReservedPercentageForDefaultDisk, err := s.GetSettingAsInt(types.SettingNameStorageReservedPercentageForDefaultDisk)
 		if err != nil {
 			return nil, err

@@ -2,7 +2,6 @@ package sync
 
 import (
 	"os"
-	"syscall"
 
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
@@ -29,7 +28,7 @@ func LockFile(filePath string) (file *os.File, err error) {
 		return nil, err
 	}
 
-	return file, syscall.Flock(int(file.Fd()), syscall.LOCK_EX)
+	return file, lockFile(file)
 }
 
 // UnlockFile is responsible for unlocking a file and closing the file handle.
@@ -40,7 +39,7 @@ func UnlockFile(file *os.File) (err error) {
 
 	log := logrus.WithField("file", file.Name())
 
-	err = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+	err = unlockFile(file)
 	if err != nil {
 		log.WithError(err).Warn("Failed to unlock file")
 	}

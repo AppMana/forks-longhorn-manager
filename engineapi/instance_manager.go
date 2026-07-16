@@ -32,7 +32,10 @@ const (
 	// UnsupportedInstanceManagerProxyAPIVersion means the instance manager without the proxy client (Longhorn release before v1.3.0)
 	UnsupportedInstanceManagerProxyAPIVersion = 0
 
-	DefaultEnginePortCount = 1
+	// Reserve the controller port plus the engine frontend-data and transition
+	// ports. The Windows node target connects to PortStart+1 and remains stable
+	// while replacements receive a distinct three-port range.
+	DefaultEnginePortCount = 3
 
 	DefaultReplicaPortCountV1 = 10
 	DefaultReplicaPortCountV2 = 5

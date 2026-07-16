@@ -11,13 +11,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/handlers"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 
 	"github.com/longhorn/longhorn-engine/pkg/types"
 )
@@ -110,31 +108,6 @@ func (h filteredLoggingHandler) ServeHTTP(w http.ResponseWriter, req *http.Reque
 	h.loggingHandler.ServeHTTP(w, req)
 }
 
-func DuplicateDevice(src, dest string) error {
-	stat := unix.Stat_t{}
-	if err := unix.Stat(src, &stat); err != nil {
-		return fmt.Errorf("cannot duplicate device because cannot find %s: %v", src, err)
-	}
-	major := int(stat.Rdev / 256)
-	minor := int(stat.Rdev % 256)
-	if err := mknod(dest, major, minor); err != nil {
-		return fmt.Errorf("cannot duplicate device %s to %s", src, dest)
-	}
-	if err := os.Chmod(dest, 0660); err != nil {
-		return fmt.Errorf("couldn't change permission of the device %s: %s", dest, err)
-	}
-	return nil
-}
-
-func mknod(device string, major, minor int) error {
-	var fileMode os.FileMode = 0660
-	fileMode |= unix.S_IFBLK
-	dev := int((major << 8) | (minor & 0xff) | ((minor & 0xfff00) << 12))
-
-	logrus.Infof("Creating device %s %d:%d", device, major, minor)
-	return unix.Mknod(device, uint32(fileMode), dev)
-}
-
 func RemoveDevice(dev string) error {
 	if _, err := os.Stat(dev); err == nil {
 		if err := remove(dev); err != nil {
@@ -176,26 +149,6 @@ func Volume2ISCSIName(name string) string {
 
 func Now() string {
 	return time.Now().UTC().Format(time.RFC3339)
-}
-
-func GetFileActualSize(file string) int64 {
-	var st syscall.Stat_t
-	if err := syscall.Stat(file, &st); err != nil {
-		logrus.WithError(err).Errorf("Failed to get size of file %v", file)
-		return -1
-	}
-	return st.Blocks * BlockSizeLinux
-}
-
-func GetHeadFileModifyTimeAndSize(file string) (int64, int64, error) {
-	var st syscall.Stat_t
-
-	if err := syscall.Stat(file, &st); err != nil {
-		logrus.WithError(err).Errorf("Failed to head file %v stat", file)
-		return 0, 0, err
-	}
-
-	return st.Mtim.Nano(), st.Blocks * BlockSizeLinux, nil
 }
 
 func ParseLabels(labels []string) (map[string]string, error) {

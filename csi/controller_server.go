@@ -107,6 +107,30 @@ func NewControllerServer(apiClient *longhornclient.RancherClient, nodeID string)
 	}, nil
 }
 
+func workloadFilesystemFromCapabilities(capabilities []*csi.VolumeCapability) (string, error) {
+	filesystem := ""
+	for _, capability := range capabilities {
+		mount := capability.GetMount()
+		if mount == nil {
+			continue
+		}
+		candidate := strings.ToLower(strings.TrimSpace(mount.GetFsType()))
+		if candidate == "" {
+			candidate = defaultFsType
+		}
+		switch candidate {
+		case "ext4", "xfs", "ntfs", "refs":
+		default:
+			return "", fmt.Errorf("unsupported workload filesystem %q", candidate)
+		}
+		if filesystem != "" && filesystem != candidate {
+			return "", fmt.Errorf("volume capabilities request conflicting filesystems %q and %q", filesystem, candidate)
+		}
+		filesystem = candidate
+	}
+	return filesystem, nil
+}
+
 func (cs *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVolumeRequest) (*csi.CreateVolumeResponse, error) {
 	log := cs.log.WithFields(logrus.Fields{"function": "CreateVolume"})
 
@@ -254,6 +278,18 @@ func (cs *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 		if exVolSize != reqVolSizeBytes {
 			return nil, status.Errorf(codes.AlreadyExists, "volume %s size %v differs from requested size %v", existVol.Name, exVolSize, reqVolSizeBytes)
 		}
+		requestedFilesystem, err := workloadFilesystemFromCapabilities(req.VolumeCapabilities)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		existingFilesystem := existVol.WorkloadFileSystem
+		if existingFilesystem == "" && requestedFilesystem != "" {
+			existingFilesystem = defaultFsType
+		}
+		if existingFilesystem != requestedFilesystem {
+			return nil, status.Errorf(codes.AlreadyExists, "volume %s workload filesystem %q differs from requested filesystem %q",
+				existVol.Name, existVol.WorkloadFileSystem, requestedFilesystem)
+		}
 
 		// pass through the volume content source in case this volume is in the process of being created.
 		// We won't wait for clone/restore to complete but return OK immediately here so that
@@ -296,6 +332,10 @@ func (cs *ControllerServer) CreateVolume(ctx context.Context, req *csi.CreateVol
 
 	vol.Name = volumeID
 	vol.Size = fmt.Sprintf("%d", reqVolSizeBytes)
+	vol.WorkloadFileSystem, err = workloadFilesystemFromCapabilities(req.VolumeCapabilities)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
 
 	log.Infof("Creating a volume by API client, name: %s, size: %s, accessMode: %v, dataEngine: %v",
 		vol.Name, vol.Size, vol.AccessMode, vol.DataEngine)

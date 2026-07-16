@@ -64,6 +64,7 @@ const (
 	ErrorReplicaScheduleReplicaAlreadyScheduled           = "replica already scheduled"
 	ErrorReplicaScheduleLonghornClientOperationFailed     = "longhorn client operation failed"
 	ErrorReplicaScheduleIncompatibleVolumeSize            = "incompatible volume size"
+	ErrorReplicaScheduleCapabilityNotSupported            = "required replica capability is not supported"
 )
 
 type DiskType string

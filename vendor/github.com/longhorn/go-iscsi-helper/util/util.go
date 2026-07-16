@@ -10,7 +10,6 @@ import (
 
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
 
 	lhtypes "github.com/longhorn/go-common-libs/types"
 )
@@ -90,15 +89,6 @@ func DuplicateDevice(dev *lhtypes.BlockDeviceInfo, dest string) error {
 		return errors.Wrapf(err, "cannot change ownership of the device %s", dest)
 	}
 	return nil
-}
-
-func mknod(device string, major, minor int) error {
-	var fileMode os.FileMode = 0660
-	fileMode |= unix.S_IFBLK
-	dev := int(unix.Mkdev(uint32(major), uint32(minor)))
-
-	logrus.Infof("Creating device %s %d:%d", device, major, minor)
-	return unix.Mknod(device, uint32(fileMode), dev)
 }
 
 func removeAsync(path string, done chan<- error) {
