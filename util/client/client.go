@@ -13,7 +13,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -45,7 +44,7 @@ func NewClients(kubeconfigPath string, needDataStore bool, stopCh <-chan struct{
 		namespace = corev1.NamespaceDefault
 	}
 
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	config, err := util.BuildConfig(kubeconfigPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get client config")
 	}

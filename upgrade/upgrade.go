@@ -11,7 +11,6 @@ import (
 	"golang.org/x/mod/semver"
 
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
@@ -32,6 +31,7 @@ import (
 	"github.com/longhorn/longhorn-manager/upgrade/v17xto180"
 	"github.com/longhorn/longhorn-manager/upgrade/v18xto190"
 	"github.com/longhorn/longhorn-manager/upgrade/v19xto1100"
+	"github.com/longhorn/longhorn-manager/util"
 
 	longhorn "github.com/longhorn/longhorn-manager/k8s/pkg/apis/longhorn/v1beta2"
 	lhclientset "github.com/longhorn/longhorn-manager/k8s/pkg/client/clientset/versioned"
@@ -49,7 +49,7 @@ func Upgrade(kubeconfigPath, currentNodeID, managerImage string, enableUpgradeVe
 			"using default namespace", types.EnvPodNamespace)
 		namespace = corev1.NamespaceDefault
 	}
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	config, err := util.BuildConfig(kubeconfigPath)
 	if err != nil {
 		return errors.Wrap(err, "unable to get client config")
 	}

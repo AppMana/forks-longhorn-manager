@@ -10,8 +10,6 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
 
-	"k8s.io/client-go/rest"
-
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/longhorn/longhorn-manager/types"
@@ -139,7 +137,7 @@ func getSettingAsBoolean(name types.SettingName, namespace string, client *lhcli
 }
 
 func GetLonghornClientset() (*lhclientset.Clientset, error) {
-	config, err := rest.InClusterConfig()
+	config, err := util.InClusterConfig()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get client config")
 	}

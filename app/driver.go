@@ -14,7 +14,6 @@ import (
 	"github.com/urfave/cli"
 
 	"k8s.io/apimachinery/pkg/util/version"
-	"k8s.io/client-go/tools/clientcmd"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -175,7 +174,7 @@ func deployDriver(c *cli.Context) error {
 	managerImage := c.String(FlagManagerImage)
 	managerURL := c.String(FlagManagerURL)
 
-	config, err := clientcmd.BuildConfigFromFlags("", c.String(FlagKubeConfig))
+	config, err := util.BuildConfig(c.String(FlagKubeConfig))
 	if err != nil {
 		return errors.Wrap(err, "failed to get client config")
 	}

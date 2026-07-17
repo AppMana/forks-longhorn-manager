@@ -15,7 +15,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 
@@ -118,7 +117,7 @@ func DaemonCmd() cli.Command {
 // - kubeconfigPath: The path to the kubeconfig file.
 // - currentNodeID: The ID of the current node attempting to acquire the leadership.
 func startWebhooksByLeaderElection(ctx context.Context, kubeconfigPath, currentNodeID string) error {
-	config, err := rest.InClusterConfig()
+	config, err := util.BuildConfig(kubeconfigPath)
 	if err != nil {
 		return errors.Wrap(err, "failed to get client config")
 	}

@@ -9,13 +9,12 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
 
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/client-go/rest"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/longhorn/longhorn-manager/types"
+	"github.com/longhorn/longhorn-manager/util"
 
 	apputil "github.com/longhorn/longhorn-manager/app/util"
 	longhornclient "github.com/longhorn/longhorn-manager/client"
@@ -43,7 +42,7 @@ func NewJob(name string, logger *logrus.Logger, managerURL string, recurringJob 
 		return nil, errors.Wrap(err, "failed to create scheme")
 	}
 
-	config, err := rest.InClusterConfig()
+	config, err := util.InClusterConfig()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get client config")
 	}

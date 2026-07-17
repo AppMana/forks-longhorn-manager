@@ -6,8 +6,6 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
 
-	"k8s.io/client-go/tools/clientcmd"
-
 	corev1 "k8s.io/api/core/v1"
 	metricsclientset "k8s.io/metrics/pkg/client/clientset/versioned"
 
@@ -102,7 +100,7 @@ func InitMetricsCollectorSystem(logger logrus.FieldLogger, currentNodeID string,
 }
 
 func buildMetricClientFromConfigPath(kubeconfigPath string) (*metricsclientset.Clientset, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	config, err := util.BuildConfig(kubeconfigPath)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get client config")
 	}

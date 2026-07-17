@@ -21,8 +21,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	"k8s.io/client-go/rest"
-
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -71,7 +69,7 @@ func NewControllerServer(apiClient *longhornclient.RancherClient, nodeID string)
 		return nil, fmt.Errorf("failed to detect pod namespace, environment variable %v is missing", types.EnvPodNamespace)
 	}
 
-	config, err := rest.InClusterConfig()
+	config, err := util.InClusterConfig()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get client config")
 	}

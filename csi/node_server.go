@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"k8s.io/client-go/rest"
 	"k8s.io/mount-utils"
 
 	corev1 "k8s.io/api/core/v1"
@@ -28,6 +27,7 @@ import (
 	"github.com/longhorn/longhorn-manager/csi/crypto"
 	"github.com/longhorn/longhorn-manager/engineapi"
 	"github.com/longhorn/longhorn-manager/types"
+	"github.com/longhorn/longhorn-manager/util"
 
 	lhns "github.com/longhorn/go-common-libs/ns"
 	lhtypes "github.com/longhorn/go-common-libs/types"
@@ -70,7 +70,7 @@ func NewNodeServer(apiClient *longhornclient.RancherClient, nodeID string) (*Nod
 		return nil, fmt.Errorf("failed to detect pod namespace, environment variable %v is missing", types.EnvPodNamespace)
 	}
 
-	config, err := rest.InClusterConfig()
+	config, err := util.InClusterConfig()
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get client config")
 	}

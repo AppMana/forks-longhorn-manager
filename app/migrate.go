@@ -10,14 +10,13 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/urfave/cli"
 
-	"k8s.io/client-go/rest"
-
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kubeclientset "k8s.io/client-go/kubernetes"
 
 	"github.com/longhorn/longhorn-manager/datastore"
 	"github.com/longhorn/longhorn-manager/types"
+	"github.com/longhorn/longhorn-manager/util"
 
 	longhorn "github.com/longhorn/longhorn-manager/k8s/pkg/apis/longhorn/v1beta2"
 	lhclientset "github.com/longhorn/longhorn-manager/k8s/pkg/client/clientset/versioned"
@@ -53,7 +52,7 @@ func migrateForPre070Volumes(c *cli.Context) error {
 		return fmt.Errorf("failed to detect pod namespace, environment variable %v is missing", types.EnvPodNamespace)
 	}
 
-	config, err := rest.InClusterConfig()
+	config, err := util.InClusterConfig()
 	if err != nil {
 		return errors.Wrap(err, "failed to get client config")
 	}
