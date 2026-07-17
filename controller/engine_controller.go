@@ -701,6 +701,10 @@ func (ec *EngineController) CreateInstance(obj interface{}) (*longhorn.InstanceP
 	if err != nil {
 		return nil, err
 	}
+	dataServerProtocol, err := getDataServerProtocolForNode(ec.ds, e.Spec.NodeID, v.Spec.DataLocality)
+	if err != nil {
+		return nil, err
+	}
 
 	instanceManagerPod, err := ec.ds.GetPod(im.Name)
 	if err != nil {
@@ -724,6 +728,7 @@ func (ec *EngineController) CreateInstance(obj interface{}) (*longhorn.InstanceP
 		EngineReplicaTimeout:             engineReplicaTimeout,
 		ReplicaFileSyncHTTPClientTimeout: fileSyncHTTPClientTimeout,
 		DataLocality:                     v.Spec.DataLocality,
+		DataServerProtocol:               dataServerProtocol,
 		EngineCLIAPIVersion:              cliAPIVersion,
 		UpgradeRequired:                  false,
 		InitiatorAddress:                 instanceManagerStorageIP,
@@ -2718,6 +2723,10 @@ func (ec *EngineController) UpgradeEngineInstance(e *longhorn.Engine, log *logru
 	if err != nil {
 		return err
 	}
+	dataServerProtocol, err := getDataServerProtocolForNode(ec.ds, e.Spec.NodeID, v.Spec.DataLocality)
+	if err != nil {
+		return err
+	}
 
 	processBinary, err := c.InstanceGetBinary(e.Spec.DataEngine, e.Name, string(longhorn.InstanceManagerTypeEngine), "")
 	if err != nil {
@@ -2735,6 +2744,7 @@ func (ec *EngineController) UpgradeEngineInstance(e *longhorn.Engine, log *logru
 		EngineReplicaTimeout:             engineReplicaTimeout,
 		ReplicaFileSyncHTTPClientTimeout: fileSyncHTTPClientTimeout,
 		DataLocality:                     v.Spec.DataLocality,
+		DataServerProtocol:               dataServerProtocol,
 		EngineCLIAPIVersion:              cliAPIVersion,
 	})
 	if err != nil {

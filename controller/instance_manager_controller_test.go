@@ -170,6 +170,18 @@ func (s *TestSuite) TestPlatformNodeSelector(c *C) {
 	c.Assert(configured[corev1.LabelOSStable], Equals, "linux")
 }
 
+func (s *TestSuite) TestDataServerProtocolForKubernetesNode(c *C) {
+	windowsNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{corev1.LabelOSStable: "windows"}},
+	}
+	linuxNode := &corev1.Node{
+		Status: corev1.NodeStatus{NodeInfo: corev1.NodeSystemInfo{OperatingSystem: "linux"}},
+	}
+
+	c.Assert(dataServerProtocolForKubernetesNode(windowsNode), Equals, engineapi.DataServerProtocolNPIPE)
+	c.Assert(dataServerProtocolForKubernetesNode(linuxNode), Equals, engineapi.DataServerProtocolUNIX)
+}
+
 func (s *TestSuite) TestWindowsHostStorageNetwork(c *C) {
 	windowsHostProcess := &corev1.Pod{Spec: corev1.PodSpec{
 		HostNetwork:  true,

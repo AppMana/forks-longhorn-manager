@@ -10,6 +10,7 @@ import (
 	"github.com/cockroachdb/errors"
 	"github.com/sirupsen/logrus"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/client-go/util/workqueue"
@@ -21,10 +22,29 @@ import (
 	lhtypes "github.com/longhorn/go-common-libs/types"
 
 	"github.com/longhorn/longhorn-manager/datastore"
+	"github.com/longhorn/longhorn-manager/engineapi"
 	"github.com/longhorn/longhorn-manager/types"
 
 	longhorn "github.com/longhorn/longhorn-manager/k8s/pkg/apis/longhorn/v1beta2"
 )
+
+func dataServerProtocolForKubernetesNode(node *corev1.Node) string {
+	if isWindowsKubernetesNode(node) {
+		return engineapi.DataServerProtocolNPIPE
+	}
+	return engineapi.DataServerProtocolUNIX
+}
+
+func getDataServerProtocolForNode(ds *datastore.DataStore, nodeID string, dataLocality longhorn.DataLocality) (string, error) {
+	if dataLocality != longhorn.DataLocalityStrictLocal {
+		return "", nil
+	}
+	node, err := ds.GetKubernetesNodeRO(nodeID)
+	if err != nil {
+		return "", errors.Wrapf(err, "failed to discover data-server protocol for node %v", nodeID)
+	}
+	return dataServerProtocolForKubernetesNode(node), nil
+}
 
 const (
 	podRecreateInitBackoff = 1 * time.Second

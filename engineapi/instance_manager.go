@@ -40,8 +40,11 @@ const (
 	DefaultReplicaPortCountV1 = 10
 	DefaultReplicaPortCountV2 = 5
 
-	DefaultPortArg         = "--listen,:"
-	DefaultTerminateSignal = "SIGHUP"
+	DefaultPortArg          = "--listen,:"
+	DefaultTerminateSignal  = "SIGHUP"
+	DataServerProtocolTCP   = "tcp"
+	DataServerProtocolUNIX  = "unix"
+	DataServerProtocolNPIPE = "npipe"
 
 	// IncompatibleInstanceManagerAPIVersion means the instance manager version in v0.7.0
 	IncompatibleInstanceManagerAPIVersion = -1
@@ -374,7 +377,7 @@ func getTypeForProcess(name string) longhorn.InstanceType {
 
 func getBinaryAndArgsForEngineProcessCreation(e *longhorn.Engine,
 	frontend string, engineReplicaTimeout, replicaFileSyncHTTPClientTimeout int64,
-	dataLocality longhorn.DataLocality, engineCLIAPIVersion int, encrypted bool) (string, []string, error) {
+	dataLocality longhorn.DataLocality, dataServerProtocol string, engineCLIAPIVersion int, encrypted bool) (string, []string, error) {
 
 	args := []string{"controller", e.Spec.VolumeName,
 		"--frontend", frontend,
@@ -408,7 +411,10 @@ func getBinaryAndArgsForEngineProcessCreation(e *longhorn.Engine,
 			"--file-sync-http-client-timeout", strconv.FormatInt(replicaFileSyncHTTPClientTimeout, 10))
 
 		if dataLocality == longhorn.DataLocalityStrictLocal {
-			args = append(args, "--data-server-protocol", "unix")
+			if dataServerProtocol == "" {
+				dataServerProtocol = DataServerProtocolUNIX
+			}
+			args = append(args, "--data-server-protocol", dataServerProtocol)
 		}
 
 		if e.Spec.UnmapMarkSnapChainRemovedEnabled {
@@ -438,7 +444,7 @@ func getBinaryAndArgsForEngineProcessCreation(e *longhorn.Engine,
 }
 
 func getBinaryAndArgsForReplicaProcessCreation(r *longhorn.Replica,
-	dataPath, backingImagePath string, dataLocality longhorn.DataLocality, portCount, engineCLIAPIVersion int, encrypted bool) (string, []string, error) {
+	dataPath, backingImagePath string, dataLocality longhorn.DataLocality, dataServerProtocol string, portCount, engineCLIAPIVersion int, encrypted bool) (string, []string, error) {
 
 	requestSize, err := util.GetActualBackendSize(r.Spec.VolumeSize, encrypted, engineCLIAPIVersion)
 	if err != nil {
@@ -462,7 +468,10 @@ func getBinaryAndArgsForReplicaProcessCreation(r *longhorn.Replica,
 		}
 
 		if dataLocality == longhorn.DataLocalityStrictLocal {
-			args = append(args, "--data-server-protocol", "unix")
+			if dataServerProtocol == "" {
+				dataServerProtocol = DataServerProtocolUNIX
+			}
+			args = append(args, "--data-server-protocol", dataServerProtocol)
 		}
 
 		if r.Spec.UnmapMarkDiskChainRemovedEnabled {
@@ -502,6 +511,7 @@ type EngineInstanceCreateRequest struct {
 	EngineReplicaTimeout             int64
 	ReplicaFileSyncHTTPClientTimeout int64
 	DataLocality                     longhorn.DataLocality
+	DataServerProtocol               string
 	EngineCLIAPIVersion              int
 	UpgradeRequired                  bool
 	InitiatorAddress                 string
@@ -527,7 +537,7 @@ func (c *InstanceManagerClient) EngineInstanceCreate(req *EngineInstanceCreateRe
 
 	switch req.Engine.Spec.DataEngine {
 	case longhorn.DataEngineTypeV1:
-		binary, args, err = getBinaryAndArgsForEngineProcessCreation(req.Engine, frontend, req.EngineReplicaTimeout, req.ReplicaFileSyncHTTPClientTimeout, req.DataLocality, req.EngineCLIAPIVersion, req.Encrypted)
+		binary, args, err = getBinaryAndArgsForEngineProcessCreation(req.Engine, frontend, req.EngineReplicaTimeout, req.ReplicaFileSyncHTTPClientTimeout, req.DataLocality, req.DataServerProtocol, req.EngineCLIAPIVersion, req.Encrypted)
 		if err != nil {
 			return nil, err
 		}
@@ -583,6 +593,7 @@ type ReplicaInstanceCreateRequest struct {
 	DataPath            string
 	BackingImagePath    string
 	DataLocality        longhorn.DataLocality
+	DataServerProtocol  string
 	EngineCLIAPIVersion int
 	Encrypted           bool
 }
@@ -685,7 +696,7 @@ func (c *InstanceManagerClient) ReplicaInstanceCreate(req *ReplicaInstanceCreate
 	args := []string{}
 	var err error
 	if types.IsDataEngineV1(req.Replica.Spec.DataEngine) {
-		binary, args, err = getBinaryAndArgsForReplicaProcessCreation(req.Replica, req.DataPath, req.BackingImagePath, req.DataLocality, DefaultReplicaPortCountV1, req.EngineCLIAPIVersion, req.Encrypted)
+		binary, args, err = getBinaryAndArgsForReplicaProcessCreation(req.Replica, req.DataPath, req.BackingImagePath, req.DataLocality, req.DataServerProtocol, DefaultReplicaPortCountV1, req.EngineCLIAPIVersion, req.Encrypted)
 		if err != nil {
 			return nil, err
 		}
@@ -857,6 +868,7 @@ type EngineInstanceUpgradeRequest struct {
 	EngineReplicaTimeout             int64
 	ReplicaFileSyncHTTPClientTimeout int64
 	DataLocality                     longhorn.DataLocality
+	DataServerProtocol               string
 	EngineCLIAPIVersion              int
 }
 
@@ -916,8 +928,12 @@ func (c *InstanceManagerClient) engineInstanceUpgrade(req *EngineInstanceUpgrade
 			"--file-sync-http-client-timeout", strconv.FormatInt(req.ReplicaFileSyncHTTPClientTimeout, 10))
 
 		if req.DataLocality == longhorn.DataLocalityStrictLocal {
+			dataServerProtocol := req.DataServerProtocol
+			if dataServerProtocol == "" {
+				dataServerProtocol = DataServerProtocolUNIX
+			}
 			args = append(args,
-				"--data-server-protocol", "unix")
+				"--data-server-protocol", dataServerProtocol)
 		}
 
 		if req.Engine.Spec.UnmapMarkSnapChainRemovedEnabled {

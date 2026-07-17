@@ -397,6 +397,10 @@ func (rc *ReplicaController) CreateInstance(obj interface{}) (*longhorn.Instance
 	if err != nil {
 		return nil, err
 	}
+	dataServerProtocol, err := getDataServerProtocolForNode(rc.ds, r.Spec.NodeID, v.Spec.DataLocality)
+	if err != nil {
+		return nil, err
+	}
 
 	diskName, err := rc.getDiskNameFromUUID(r)
 	if err != nil {
@@ -416,6 +420,7 @@ func (rc *ReplicaController) CreateInstance(obj interface{}) (*longhorn.Instance
 		DataPath:            dataPath,
 		BackingImagePath:    backingImagePath,
 		DataLocality:        v.Spec.DataLocality,
+		DataServerProtocol:  dataServerProtocol,
 		EngineCLIAPIVersion: cliAPIVersion,
 	})
 }
