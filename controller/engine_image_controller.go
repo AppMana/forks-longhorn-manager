@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -26,7 +27,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientset "k8s.io/client-go/kubernetes"
+	kubescheme "k8s.io/client-go/kubernetes/scheme"
 	v1core "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 
 	"github.com/longhorn/longhorn-manager/datastore"
 	"github.com/longhorn/longhorn-manager/engineapi"
@@ -54,6 +58,7 @@ type EngineImageController struct {
 	serviceAccount string
 
 	kubeClient    clientset.Interface
+	restConfig    *rest.Config
 	eventRecorder record.EventRecorder
 
 	ds *datastore.DataStore
@@ -61,9 +66,10 @@ type EngineImageController struct {
 	cacheSyncs []cache.InformerSynced
 
 	// for unit test
-	nowHandler                func() string
-	engineBinaryChecker       func(string) (bool, error)
-	engineImageVersionUpdater func(*longhorn.EngineImage) error
+	nowHandler                 func() string
+	engineBinaryChecker        func(string) (bool, error)
+	engineImageVersionUpdater  func(*longhorn.EngineImage) error
+	engineImageCapabilityProbe func(*corev1.Pod) (longhorn.EngineImageNodeCapabilities, error)
 }
 
 func NewEngineImageController(
@@ -71,6 +77,7 @@ func NewEngineImageController(
 	ds *datastore.DataStore,
 	scheme *runtime.Scheme,
 	kubeClient clientset.Interface,
+	restConfig *rest.Config,
 	namespace string, controllerID, serviceAccount string) (*EngineImageController, error) {
 
 	eventBroadcaster := record.NewBroadcaster()
@@ -86,6 +93,7 @@ func NewEngineImageController(
 		serviceAccount: serviceAccount,
 
 		kubeClient:    kubeClient,
+		restConfig:    restConfig,
 		eventRecorder: eventBroadcaster.NewRecorder(scheme, corev1.EventSource{Component: "longhorn-engine-image-controller"}),
 
 		ds: ds,
@@ -94,6 +102,7 @@ func NewEngineImageController(
 		engineBinaryChecker:       types.EngineBinaryExistOnHostForImage,
 		engineImageVersionUpdater: updateEngineImageVersion,
 	}
+	ic.engineImageCapabilityProbe = ic.probeEngineImageCapabilities
 
 	var err error
 	if _, err = ds.EngineImageInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -422,6 +431,7 @@ func (ic *EngineImageController) syncNodeDeploymentMap(engineImage *longhorn.Eng
 	if err != nil {
 		return err
 	}
+	readyPods := map[string]*corev1.Pod{}
 	for i := range windowsPods.Items {
 		pod := &windowsPods.Items[i]
 		allContainerReady := len(pod.Status.ContainerStatuses) > 0
@@ -429,13 +439,19 @@ func (ic *EngineImageController) syncNodeDeploymentMap(engineImage *longhorn.Eng
 			allContainerReady = allContainerReady && containerStatus.Ready
 		}
 		nodeDeploymentMap[pod.Spec.NodeName] = allContainerReady
+		if allContainerReady {
+			readyPods[pod.Spec.NodeName] = pod
+		}
 	}
 	for _, pod := range eiDaemonSetPods {
-		allContainerReady := true
+		allContainerReady := len(pod.Status.ContainerStatuses) > 0
 		for _, containerStatus := range pod.Status.ContainerStatuses {
 			allContainerReady = allContainerReady && containerStatus.Ready
 		}
 		nodeDeploymentMap[pod.Spec.NodeName] = allContainerReady
+		if allContainerReady {
+			readyPods[pod.Spec.NodeName] = pod
+		}
 	}
 
 	engineImage.Status.NodeDeploymentMap = nodeDeploymentMap
@@ -444,18 +460,81 @@ func (ic *EngineImageController) syncNodeDeploymentMap(engineImage *longhorn.Eng
 		if !deployed {
 			continue
 		}
-		kubeNode, err := ic.ds.GetKubernetesNodeRO(nodeName)
-		if err != nil {
-			return err
+		pod := readyPods[nodeName]
+		if pod == nil {
+			continue
 		}
-		if kubeNode.Labels[corev1.LabelOSStable] == "windows" {
-			engineImage.Status.NodeCapabilities[nodeName] = types.WindowsV1NodeCapabilities()
-		} else {
+		capabilities, probeErr := ic.engineImageCapabilityProbe(pod)
+		if probeErr == nil && hasEngineImageCapabilities(capabilities) {
+			engineImage.Status.NodeCapabilities[nodeName] = capabilities
+			continue
+		}
+		isWindows := pod.Spec.NodeSelector[corev1.LabelOSStable] == "windows" || pod.Labels[windowsEngineImageLabel] != ""
+		if !isWindows {
+			// Engine images predating the capability wire field retain the Linux
+			// behavior they had before this status field was introduced.
 			engineImage.Status.NodeCapabilities[nodeName] = types.LegacyLinuxNodeCapabilities()
+			continue
 		}
+		// Windows is deliberately fail-closed. A ready copy pod is not proof
+		// that this exact platform binary implements a storage capability.
+		ic.logger.WithError(probeErr).WithFields(logrus.Fields{"node": nodeName, "image": engineImage.Spec.Image}).Warn("Windows engine image did not advertise capabilities")
 	}
 
 	return nil
+}
+
+type engineVersionEnvelope struct {
+	ClientVersion struct {
+		Capabilities longhorn.EngineImageNodeCapabilities `json:"capabilities"`
+	} `json:"clientVersion"`
+}
+
+func hasEngineImageCapabilities(capabilities longhorn.EngineImageNodeCapabilities) bool {
+	return len(capabilities.Controller)+len(capabilities.Replica)+len(capabilities.Frontend)+len(capabilities.Disk) > 0
+}
+
+func (ic *EngineImageController) probeEngineImageCapabilities(pod *corev1.Pod) (longhorn.EngineImageNodeCapabilities, error) {
+	if ic.restConfig == nil {
+		return longhorn.EngineImageNodeCapabilities{}, fmt.Errorf("Kubernetes REST configuration is unavailable")
+	}
+	if len(pod.Spec.Containers) == 0 {
+		return longhorn.EngineImageNodeCapabilities{}, fmt.Errorf("engine image pod %v has no containers", pod.Name)
+	}
+	command := []string{"/data/longhorn", "version", "--client-only"}
+	if pod.Spec.NodeSelector[corev1.LabelOSStable] == "windows" || pod.Labels[windowsEngineImageLabel] != "" {
+		command = []string{`C:\data\longhorn.exe`, "version", "--client-only"}
+	}
+	execRequest := ic.kubeClient.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(pod.Name).
+		Namespace(pod.Namespace).
+		SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: pod.Spec.Containers[0].Name,
+			Command:   command,
+			Stdout:    true,
+			Stderr:    true,
+		}, kubescheme.ParameterCodec)
+	executor, err := remotecommand.NewSPDYExecutor(ic.restConfig, "POST", execRequest.URL())
+	if err != nil {
+		return longhorn.EngineImageNodeCapabilities{}, errors.Wrap(err, "create capability probe executor")
+	}
+	var stdout, stderr bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := executor.StreamWithContext(ctx, remotecommand.StreamOptions{Stdout: &stdout, Stderr: &stderr}); err != nil {
+		return longhorn.EngineImageNodeCapabilities{}, errors.Wrapf(err, "probe engine image capabilities: %s", strings.TrimSpace(stderr.String()))
+	}
+	return decodeEngineImageCapabilities(stdout.Bytes())
+}
+
+func decodeEngineImageCapabilities(data []byte) (longhorn.EngineImageNodeCapabilities, error) {
+	var output engineVersionEnvelope
+	if err := json.Unmarshal(data, &output); err != nil {
+		return longhorn.EngineImageNodeCapabilities{}, errors.Wrap(err, "decode engine image capability output")
+	}
+	return output.ClientVersion.Capabilities, nil
 }
 
 // handleAutoUpgradeEngineImageToDefaultEngineImage automatically upgrades volume's engine image to default engine image when it is applicable

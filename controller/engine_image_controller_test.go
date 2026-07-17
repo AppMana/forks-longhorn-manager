@@ -58,7 +58,7 @@ func newTestEngineImageController(lhClient *lhfake.Clientset, kubeClient *fake.C
 	ic, err := NewEngineImageController(
 		logger,
 		ds, scheme.Scheme,
-		kubeClient, TestNamespace, TestNode1, TestServiceAccount)
+		kubeClient, nil, TestNamespace, TestNode1, TestServiceAccount)
 	if err != nil {
 		return nil, err
 	}
@@ -128,6 +128,7 @@ func generateEngineImageControllerTestCases() map[string]*EngineImageControllerT
 	tc.copyCurrentToExpected()
 	tc.expectedEngineImage.Status.OwnerID = TestNode1
 	tc.expectedEngineImage.Status.NodeDeploymentMap = map[string]bool{TestNode1: true}
+	tc.expectedEngineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{TestNode1: types.LegacyLinuxNodeCapabilities()}
 	testCases["Engine image ownerID node is down"] = tc
 
 	tc = getEngineImageControllerTestTemplate()
@@ -146,6 +147,7 @@ func generateEngineImageControllerTestCases() map[string]*EngineImageControllerT
 	tc.expectedEngineImage.Status.State = longhorn.EngineImageStateDeploying
 	tc.expectedEngineImage.Status.Conditions = types.SetConditionWithoutTimestamp(tc.expectedEngineImage.Status.Conditions, longhorn.EngineImageConditionTypeReady, longhorn.ConditionStatusFalse, longhorn.EngineImageConditionTypeReadyReasonDaemonSet, "")
 	tc.expectedEngineImage.Status.NodeDeploymentMap = map[string]bool{TestNode1: false}
+	tc.expectedEngineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{}
 	testCases["Engine Image DaemonSet pods are suddenly removed"] = tc
 
 	// `ei.Status.refCount` should become 2 (1 volume and 1 engine are using it) and `Status.NoRefSince` should be unset
@@ -157,6 +159,7 @@ func generateEngineImageControllerTestCases() map[string]*EngineImageControllerT
 	tc.expectedEngineImage.Status.RefCount = 2
 	tc.expectedEngineImage.Status.NoRefSince = ""
 	tc.expectedEngineImage.Status.NodeDeploymentMap = map[string]bool{TestNode1: true}
+	tc.expectedEngineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{TestNode1: types.LegacyLinuxNodeCapabilities()}
 	testCases["One volume starts to use the engine image"] = tc
 
 	// No volume is using the current engine image.
@@ -168,6 +171,7 @@ func generateEngineImageControllerTestCases() map[string]*EngineImageControllerT
 	tc.expectedEngineImage.Status.RefCount = 0
 	tc.expectedEngineImage.Status.NoRefSince = getTestNow()
 	tc.expectedEngineImage.Status.NodeDeploymentMap = map[string]bool{TestNode1: true}
+	tc.expectedEngineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{TestNode1: types.LegacyLinuxNodeCapabilities()}
 	testCases["The default engine image won't be cleaned up even if there is no volume using it"] = tc
 
 	tc = getEngineImageControllerTestTemplate()
@@ -189,6 +193,7 @@ func generateEngineImageControllerTestCases() map[string]*EngineImageControllerT
 	tc.expectedEngineImage.Status.Incompatible = true
 	tc.expectedEngineImage.Status.Conditions = types.SetConditionWithoutTimestamp(tc.expectedEngineImage.Status.Conditions, longhorn.EngineImageConditionTypeReady, longhorn.ConditionStatusFalse, longhorn.EngineImageConditionTypeReadyReasonBinary, "")
 	tc.expectedEngineImage.Status.NodeDeploymentMap = map[string]bool{TestNode1: true}
+	tc.expectedEngineImage.Status.NodeCapabilities = map[string]longhorn.EngineImageNodeCapabilities{TestNode1: types.LegacyLinuxNodeCapabilities()}
 	testCases["Incompatible engine image"] = tc
 
 	return testCases
@@ -205,9 +210,15 @@ func (s *TestSuite) TestEngineImage(c *C) {
 		extensionClient := apiextensionsfake.NewSimpleClientset() // nolint: staticcheck
 
 		informerFactories := util.NewInformerFactories(TestNamespace, kubeClient, lhClient, controller.NoResyncPeriodFunc())
+		kubeNode, err := kubeClient.CoreV1().Nodes().Create(context.TODO(), &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{Name: TestNode1, Labels: map[string]string{corev1.LabelOSStable: "linux"}},
+		}, metav1.CreateOptions{})
+		c.Assert(err, IsNil)
 
 		dsIndexer := informerFactories.KubeNamespaceFilteredInformerFactory.Apps().V1().DaemonSets().Informer().GetIndexer()
 		podIndexer := informerFactories.KubeInformerFactory.Core().V1().Pods().Informer().GetIndexer()
+		kubeNodeIndexer := informerFactories.KubeInformerFactory.Core().V1().Nodes().Informer().GetIndexer()
+		c.Assert(kubeNodeIndexer.Add(kubeNode), IsNil)
 
 		nodeIndexer := informerFactories.LhInformerFactory.Longhorn().V1beta2().Nodes().Informer().GetIndexer()
 		settingIndexer := informerFactories.LhInformerFactory.Longhorn().V1beta2().Settings().Informer().GetIndexer()
@@ -371,4 +382,25 @@ func (s *TestSuite) TestWindowsEngineBinaryDirectory(c *C) {
 		Equals,
 		`C:\var\lib\longhorn\engine-binaries\registry.example.com-longhorn-engine-v1.12.0`,
 	)
+}
+
+func (s *TestSuite) TestDecodeEngineImageCapabilities(c *C) {
+	capabilities, err := decodeEngineImageCapabilities([]byte(`{
+		"clientVersion": {"capabilities": {
+			"controller": ["engine:v1"],
+			"replica": ["access-mode:rwo"],
+			"frontend": ["workload-fs:refs"],
+			"disk": ["replica-store:sparse"]
+		}}
+	}`))
+	c.Assert(err, IsNil)
+	c.Assert(capabilities.Controller, DeepEquals, []string{"engine:v1"})
+	c.Assert(capabilities.Replica, DeepEquals, []string{"access-mode:rwo"})
+	c.Assert(capabilities.Frontend, DeepEquals, []string{"workload-fs:refs"})
+	c.Assert(capabilities.Disk, DeepEquals, []string{"replica-store:sparse"})
+	c.Assert(hasEngineImageCapabilities(capabilities), Equals, true)
+
+	legacy, err := decodeEngineImageCapabilities([]byte(`{"clientVersion": {}}`))
+	c.Assert(err, IsNil)
+	c.Assert(hasEngineImageCapabilities(legacy), Equals, false)
 }

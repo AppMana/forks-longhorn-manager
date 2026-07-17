@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	corev1 "k8s.io/api/core/v1"
 )
 
 const targetPort uint32 = 3260
@@ -123,7 +124,13 @@ func (*Server) Probe(context.Context, *csipb.ProbeRequest) (*csipb.ProbeResponse
 	return &csipb.ProbeResponse{}, nil
 }
 func (s *Server) NodeGetInfo(context.Context, *csipb.NodeGetInfoRequest) (*csipb.NodeGetInfoResponse, error) {
-	return &csipb.NodeGetInfoResponse{NodeId: s.nodeID}, nil
+	return &csipb.NodeGetInfoResponse{
+		NodeId: s.nodeID,
+		AccessibleTopology: &csipb.Topology{Segments: map[string]string{
+			corev1.LabelHostname: s.nodeID,
+			corev1.LabelOSStable: "windows",
+		}},
+	}, nil
 }
 func (*Server) NodeGetCapabilities(context.Context, *csipb.NodeGetCapabilitiesRequest) (*csipb.NodeGetCapabilitiesResponse, error) {
 	response := &csipb.NodeGetCapabilitiesResponse{}

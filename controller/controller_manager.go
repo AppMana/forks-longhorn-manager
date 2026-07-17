@@ -56,7 +56,7 @@ func StartControllers(logger logrus.FieldLogger, clients *client.Clients,
 	if err != nil {
 		return nil, err
 	}
-	engineImageController, err := NewEngineImageController(logger, ds, scheme, kubeClient, namespace, controllerID, serviceAccount)
+	engineImageController, err := NewEngineImageController(logger, ds, scheme, kubeClient, clients.Config, namespace, controllerID, serviceAccount)
 	if err != nil {
 		return nil, err
 	}

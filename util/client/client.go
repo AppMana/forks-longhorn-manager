@@ -12,6 +12,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -34,6 +35,7 @@ type Clients struct {
 	Namespace     string
 	Datastore     *datastore.DataStore
 	StopCh        <-chan struct{}
+	Config        *rest.Config
 }
 
 func NewClients(kubeconfigPath string, needDataStore bool, stopCh <-chan struct{}) (*Clients, error) {
@@ -108,5 +110,6 @@ func NewClients(kubeconfigPath string, needDataStore bool, stopCh <-chan struct{
 		Namespace:     namespace,
 		Datastore:     ds,
 		StopCh:        stopCh,
+		Config:        config,
 	}, nil
 }
