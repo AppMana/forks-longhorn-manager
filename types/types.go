@@ -842,10 +842,7 @@ func GetReplicaDataPath(diskPath, dataDirectoryName string) string {
 }
 
 func GetReplicaMountedDataPath(dataPath string) string {
-	if !strings.HasPrefix(dataPath, ReplicaHostPrefix) {
-		return filepath.Join(ReplicaHostPrefix, dataPath)
-	}
-	return dataPath
+	return getReplicaMountedDataPath(dataPath)
 }
 
 func ErrorRecordNotFoundButLvolFound(err error) bool {

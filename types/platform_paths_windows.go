@@ -23,3 +23,7 @@ func ResolveDefaultDataPath(configured string) string {
 	}
 	return configured
 }
+
+// HostProcess child processes already see the host filesystem. Unlike the
+// Linux instance-manager container, there is no /host bind-mount prefix.
+func getReplicaMountedDataPath(dataPath string) string { return filepath.Clean(dataPath) }
