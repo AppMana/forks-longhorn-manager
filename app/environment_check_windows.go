@@ -49,11 +49,7 @@ func configureWindowsKubernetesServiceEndpoint() error {
 	// are unreachable from HostProcess containers. Kubelet already has a local
 	// API proxy endpoint; reuse only its address while retaining this pod's
 	// service-account token and CA through rest.InClusterConfig.
-	paths := []string{
-		`C:\var\lib\rancher\rke2\agent\kubelet.kubeconfig`,
-		`C:\var\lib\kubelet\kubeconfig`,
-		`C:\etc\kubernetes\kubelet.conf`,
-	}
+	paths := discoverWindowsKubeletKubeconfigPaths()
 	for _, path := range paths {
 		endpoint, err := kubeconfigServerEndpoint(path)
 		if os.IsNotExist(err) {
@@ -72,6 +68,45 @@ func configureWindowsKubernetesServiceEndpoint() error {
 		return os.Setenv("KUBERNETES_SERVICE_PORT", endpointPort)
 	}
 	return fmt.Errorf("Kubernetes Service VIP %s is unreachable and no kubelet kubeconfig was found", net.JoinHostPort(host, port))
+}
+
+func discoverWindowsKubeletKubeconfigPaths() []string {
+	paths := []string{}
+	if configured := strings.TrimSpace(os.Getenv("KUBELET_KUBECONFIG")); configured != "" {
+		paths = append(paths, configured)
+	}
+
+	// Kubelet owns the path, so read the running process instead of assuming a
+	// Kubernetes distribution or install root. PowerShell performs the Windows
+	// command-line parsing and returns only the configured path.
+	command := `$process=Get-CimInstance Win32_Process -Filter "Name='kubelet.exe'" | Select-Object -First 1; ` +
+		`if ($null -ne $process) { ` +
+		`$match=[regex]::Match($process.CommandLine, '(?i)(?:^|\s)--kubeconfig(?:=|\s+)(?:"([^"]+)"|([^\s]+))'); ` +
+		`if ($match.Success) { if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value } } }`
+	if output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command).Output(); err == nil {
+		if discovered := strings.TrimSpace(string(output)); discovered != "" {
+			paths = append(paths, discovered)
+		}
+	}
+
+	// These are compatibility fallbacks for kubelets whose process command line
+	// cannot be queried. Forward slashes avoid YAML and PowerShell escaping.
+	paths = append(paths,
+		`C:/var/lib/kubelet/kubeconfig`,
+		`C:/etc/kubernetes/kubelet.conf`,
+		`C:/var/lib/rancher/rke2/agent/kubelet.kubeconfig`,
+	)
+	seen := map[string]struct{}{}
+	unique := make([]string, 0, len(paths))
+	for _, path := range paths {
+		key := strings.ToLower(filepath.Clean(path))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, path)
+	}
+	return unique
 }
 
 func kubeconfigServerEndpoint(path string) (*url.URL, error) {
