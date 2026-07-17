@@ -396,15 +396,19 @@ func (imc *InstanceManagerController) syncInstanceManager(key string) (err error
 		return err
 	}
 
+	// A Ready pod starts with unknown API versions. Discover them before
+	// handlePod performs compatibility-sensitive setting reconciliation. If the
+	// order is reversed, a healthy instance manager can be retired using the
+	// unknown (zero) version before VersionGet has a chance to persist it.
+	if err := imc.syncInstanceManagerAPIVersion(im); err != nil {
+		return err
+	}
+
 	if err := imc.handlePod(im); err != nil {
 		return err
 	}
 
 	if err := imc.syncInstanceManagerPDB(im); err != nil {
-		return err
-	}
-
-	if err := imc.syncInstanceManagerAPIVersion(im); err != nil {
 		return err
 	}
 

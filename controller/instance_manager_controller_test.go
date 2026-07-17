@@ -142,6 +142,11 @@ func newDataEngineMemorySizeSetting() *longhorn.Setting {
 }
 
 func fakeInstanceManagerVersionUpdater(im *longhorn.InstanceManager) error {
+	for _, condition := range im.Status.Conditions {
+		if condition.Type == longhorn.InstanceManagerConditionTypeSettingSynced {
+			return fmt.Errorf("instance manager settings were reconciled before API version discovery")
+		}
+	}
 	im.Status.APIMinVersion = engineapi.MinInstanceManagerAPIVersion
 	im.Status.APIVersion = engineapi.CurrentInstanceManagerAPIVersion
 	return nil
