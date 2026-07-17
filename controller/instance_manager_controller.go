@@ -647,6 +647,13 @@ func (imc *InstanceManagerController) handlePod(im *longhorn.InstanceManager) er
 		return err
 	}
 
+	// A pod can enter Running before its process-manager service is ready. Let
+	// readiness/liveness govern startup; danger-zone setting reconciliation is
+	// only meaningful once the instance manager is established.
+	if im.Status.CurrentState == longhorn.InstanceManagerStateStarting {
+		return nil
+	}
+
 	err = imc.syncLogSettingsToInstanceManagerPod(im)
 	if err != nil {
 		log.WithError(err).Warnf("Failed to sync log settings to instance manager pod %v", im.Name)
