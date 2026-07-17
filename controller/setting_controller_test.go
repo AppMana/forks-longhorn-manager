@@ -7,10 +7,11 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes/fake"
 	"k8s.io/kubernetes/pkg/controller"
 
-	corev1 "k8s.io/api/core/v1"
 	apiextensionsfake "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset/fake"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
@@ -65,6 +66,57 @@ func TestGetRegistry(t *testing.T) {
 				t.Errorf("getRegistry(%q) = %v, want %v", tt.image, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGetRuntimeObjectNodeSelectorPreservesPlatform(t *testing.T) {
+	configured := map[string]string{
+		corev1.LabelOSStable: "linux",
+		"storage-tier":       "longhorn",
+	}
+	windowsPod := &corev1.Pod{Spec: corev1.PodSpec{NodeSelector: map[string]string{
+		corev1.LabelOSStable: "windows",
+		"old-label":          "removed",
+	}}}
+
+	desired, err := getRuntimeObjectNodeSelector(configured, windowsPod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		corev1.LabelOSStable: "windows",
+		"storage-tier":       "longhorn",
+	}
+	if !reflect.DeepEqual(desired, want) {
+		t.Fatalf("unexpected Windows selector: got %v, want %v", desired, want)
+	}
+	if configured[corev1.LabelOSStable] != "linux" {
+		t.Fatalf("configured selector was mutated: %v", configured)
+	}
+
+	linuxDaemonSet := &appsv1.DaemonSet{Spec: appsv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+		NodeSelector: map[string]string{corev1.LabelOSStable: "linux"},
+	}}}}
+	desired, err = getRuntimeObjectNodeSelector(map[string]string{"storage-tier": "updated"}, linuxDaemonSet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = map[string]string{corev1.LabelOSStable: "linux", "storage-tier": "updated"}
+	if !reflect.DeepEqual(desired, want) {
+		t.Fatalf("unexpected Linux selector: got %v, want %v", desired, want)
+	}
+}
+
+func TestGetNotUpdatedNodeSelectorListUsesPlatformSelector(t *testing.T) {
+	configured := map[string]string{corev1.LabelOSStable: "linux"}
+	windowsPod := &corev1.Pod{Spec: corev1.PodSpec{NodeSelector: map[string]string{corev1.LabelOSStable: "windows"}}}
+
+	notUpdated, err := getNotUpdatedNodeSelectorList(configured, windowsPod)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notUpdated) != 0 {
+		t.Fatalf("Windows pod was incorrectly marked for replacement: %v", notUpdated)
 	}
 }
 

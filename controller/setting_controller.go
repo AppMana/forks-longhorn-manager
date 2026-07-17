@@ -1063,22 +1063,26 @@ func (sc *SettingController) updateNodeSelector() error {
 	}
 
 	for _, obj := range notUpdatedNodeSelectorObjs {
+		desiredNodeSelector, err := getRuntimeObjectNodeSelector(newNodeSelector, obj)
+		if err != nil {
+			return err
+		}
 		switch objTyped := obj.(type) {
 		case *appsv1.DaemonSet:
-			sc.logger.Infof("Updating the node selector from %v to %v for %v", objTyped.Spec.Template.Spec.NodeSelector, newNodeSelector, objTyped.Name)
-			objTyped.Spec.Template.Spec.NodeSelector = newNodeSelector
+			sc.logger.Infof("Updating the node selector from %v to %v for %v", objTyped.Spec.Template.Spec.NodeSelector, desiredNodeSelector, objTyped.Name)
+			objTyped.Spec.Template.Spec.NodeSelector = desiredNodeSelector
 			if _, err := sc.ds.UpdateDaemonSet(objTyped); err != nil {
 				return err
 			}
 		case *appsv1.Deployment:
-			sc.logger.Infof("Updating the node selector from %v to %v for %v", objTyped.Spec.Template.Spec.NodeSelector, newNodeSelector, objTyped.Name)
-			objTyped.Spec.Template.Spec.NodeSelector = newNodeSelector
+			sc.logger.Infof("Updating the node selector from %v to %v for %v", objTyped.Spec.Template.Spec.NodeSelector, desiredNodeSelector, objTyped.Name)
+			objTyped.Spec.Template.Spec.NodeSelector = desiredNodeSelector
 			if _, err := sc.ds.UpdateDeployment(objTyped); err != nil {
 				return err
 			}
 		case *corev1.Pod:
 			if objTyped.DeletionTimestamp == nil {
-				sc.logger.Infof("Deleting pod %v to update the node selector from %v to %v", objTyped.Name, objTyped.Spec.NodeSelector, newNodeSelector)
+				sc.logger.Infof("Deleting pod %v to update the node selector from %v to %v", objTyped.Name, objTyped.Spec.NodeSelector, desiredNodeSelector)
 				if err := sc.ds.DeletePod(objTyped.Name); err != nil {
 					return err
 				}
@@ -1223,22 +1227,19 @@ func (sc *SettingController) updateSystemManagedCSIComponentsResourceLimits() er
 
 func getNotUpdatedNodeSelectorList(newNodeSelector map[string]string, objs ...runtime.Object) ([]runtime.Object, error) {
 	notUpdatedObjsList := []runtime.Object{}
-	var oldNodeSelector map[string]string
 	for _, obj := range objs {
-		switch objTyped := obj.(type) {
-		case *appsv1.DaemonSet:
-			oldNodeSelector = objTyped.Spec.Template.Spec.NodeSelector
-		case *appsv1.Deployment:
-			oldNodeSelector = objTyped.Spec.Template.Spec.NodeSelector
-		case *corev1.Pod:
-			oldNodeSelector = objTyped.Spec.NodeSelector
-		default:
-			return nil, fmt.Errorf("unknown object type %v when updating %v setting", objTyped, types.SettingNameSystemManagedComponentsNodeSelector)
+		oldNodeSelector, err := runtimeObjectNodeSelector(obj)
+		if err != nil {
+			return nil, err
 		}
-		if oldNodeSelector == nil && len(newNodeSelector) == 0 {
+		desiredNodeSelector, err := getRuntimeObjectNodeSelector(newNodeSelector, obj)
+		if err != nil {
+			return nil, err
+		}
+		if oldNodeSelector == nil && len(desiredNodeSelector) == 0 {
 			continue
 		}
-		if reflect.DeepEqual(oldNodeSelector, newNodeSelector) {
+		if reflect.DeepEqual(oldNodeSelector, desiredNodeSelector) {
 			continue
 		}
 
@@ -1246,6 +1247,36 @@ func getNotUpdatedNodeSelectorList(newNodeSelector map[string]string, objs ...ru
 	}
 
 	return notUpdatedObjsList, nil
+}
+
+func runtimeObjectNodeSelector(obj runtime.Object) (map[string]string, error) {
+	switch objTyped := obj.(type) {
+	case *appsv1.DaemonSet:
+		return objTyped.Spec.Template.Spec.NodeSelector, nil
+	case *appsv1.Deployment:
+		return objTyped.Spec.Template.Spec.NodeSelector, nil
+	case *corev1.Pod:
+		return objTyped.Spec.NodeSelector, nil
+	default:
+		return nil, fmt.Errorf("unknown object type %v when updating %v setting", objTyped, types.SettingNameSystemManagedComponentsNodeSelector)
+	}
+}
+
+// getRuntimeObjectNodeSelector applies the configurable selector without
+// changing the operating system required by an existing runtime object. An OS
+// selector is a binary/platform constraint, not placement policy: replacing a
+// Windows instance-manager or engine-image selector with the common Linux
+// selector makes the component permanently unschedulable in mixed clusters.
+func getRuntimeObjectNodeSelector(configuredNodeSelector map[string]string, obj runtime.Object) (map[string]string, error) {
+	currentNodeSelector, err := runtimeObjectNodeSelector(obj)
+	if err != nil {
+		return nil, err
+	}
+	desiredNodeSelector := cloneStringMap(configuredNodeSelector)
+	if operatingSystem := currentNodeSelector[corev1.LabelOSStable]; operatingSystem != "" {
+		desiredNodeSelector[corev1.LabelOSStable] = operatingSystem
+	}
+	return desiredNodeSelector, nil
 }
 
 func (sc *SettingController) syncUpgradeChecker() error {
