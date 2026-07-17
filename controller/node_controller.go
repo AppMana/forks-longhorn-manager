@@ -1010,6 +1010,15 @@ func (nc *NodeController) updateDiskStatusSchedulableCondition(node *longhorn.No
 }
 
 func (nc *NodeController) syncNodeStatus(pod *corev1.Pod, node *longhorn.Node) error {
+	// Windows HostProcess containers access the host filesystem directly and do
+	// not use Linux mount propagation. Treat HostProcess as the platform's
+	// equivalent prerequisite so mixed clusters do not block CSI deployment.
+	if pod.Spec.SecurityContext != nil && pod.Spec.SecurityContext.WindowsOptions != nil &&
+		pod.Spec.SecurityContext.WindowsOptions.HostProcess != nil && *pod.Spec.SecurityContext.WindowsOptions.HostProcess {
+		node.Status.Conditions = types.SetCondition(node.Status.Conditions, longhorn.NodeConditionTypeMountPropagation, longhorn.ConditionStatusTrue, "", "")
+		return nil
+	}
+
 	// sync bidirectional mount propagation for node status to check whether the node could deploy CSI driver
 	var mgrContainer *corev1.Container
 	for _, container := range pod.Spec.Containers {
