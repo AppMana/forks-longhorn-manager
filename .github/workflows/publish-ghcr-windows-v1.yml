@@ -171,16 +171,20 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install crane
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/google/go-containerregistry/cmd/crane@v0.21.7
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Publish and verify multi-platform index
         env:
           IMAGE: ${{ needs.prepare.outputs.image }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: |
           set -euo pipefail
-          docker buildx imagetools create --tag "$IMAGE:$TAG" \
-            "$IMAGE:$TAG-linux-amd64" \
-            "$IMAGE:$TAG-windows-ltsc2022-amd64" \
-            "$IMAGE:$TAG-windows-ltsc2025-amd64"
+          crane index append --docker-empty-base --tag "$IMAGE:$TAG" \
+            --manifest "$IMAGE:$TAG-linux-amd64" \
+            --manifest "$IMAGE:$TAG-windows-ltsc2022-amd64" \
+            --manifest "$IMAGE:$TAG-windows-ltsc2025-amd64"
           raw="$(docker buildx imagetools inspect --raw "$IMAGE:$TAG")"
           jq -e '.manifests | length == 3' <<< "$raw"
           jq -e '[.manifests[].platform | select(.os == "linux" and .architecture == "amd64")] | length == 1' <<< "$raw"
