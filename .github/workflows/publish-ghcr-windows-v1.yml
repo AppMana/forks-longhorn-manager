@@ -185,7 +185,12 @@ jobs:
             --manifest "$IMAGE:$TAG-linux-amd64" \
             --manifest "$IMAGE:$TAG-windows-ltsc2022-amd64" \
             --manifest "$IMAGE:$TAG-windows-ltsc2025-amd64"
-          raw="$(docker buildx imagetools inspect --raw "$IMAGE:$TAG")"
+          raw=''
+          for attempt in {1..12}; do
+            if raw="$(docker buildx imagetools inspect --raw "$IMAGE:$TAG" 2>/dev/null)"; then break; fi
+            sleep 5
+          done
+          test -n "$raw"
           jq -e '.manifests | length == 3' <<< "$raw"
           jq -e '[.manifests[].platform | select(.os == "linux" and .architecture == "amd64")] | length == 1' <<< "$raw"
           jq -e '[.manifests[].platform | select(.os == "windows" and .architecture == "amd64" and (."os.version" | length > 0))] | length == 2' <<< "$raw"
