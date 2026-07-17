@@ -2175,6 +2175,16 @@ func (imc *InstanceManagerController) createWindowsInstanceManagerPodSpec(im *lo
 		PeriodSeconds:       datastore.PodProbePeriodSeconds,
 		FailureThreshold:    datastore.IMPodLivenessProbeFailureThreshold,
 	}
+	// Windows reports a HostProcess container running before the process manager
+	// has opened its gRPC listener. Gate Ready on that listener so the ordinary
+	// instance-manager state machine cannot race startup and recycle the pod.
+	container.ReadinessProbe = &corev1.Probe{
+		ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(engineapi.InstanceManagerProcessManagerServiceDefaultPort)}},
+		InitialDelaySeconds: datastore.IMPodProbeInitialDelay,
+		TimeoutSeconds:      datastore.PodProbeTimeoutSeconds,
+		PeriodSeconds:       datastore.PodProbePeriodSeconds,
+		FailureThreshold:    datastore.IMPodLivenessProbeFailureThreshold,
+	}
 	container.VolumeMounts = []corev1.VolumeMount{
 		{Name: "engine-binaries", MountPath: `C:\var\lib\longhorn\engine-binaries`},
 		{Name: "metadata", MountPath: `C:\var\lib\longhorn\metadata`},
