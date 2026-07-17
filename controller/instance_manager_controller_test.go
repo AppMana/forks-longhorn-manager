@@ -152,6 +152,24 @@ func fakeInstanceManagerVersionUpdater(im *longhorn.InstanceManager) error {
 	return nil
 }
 
+func (s *TestSuite) TestPlatformNodeSelector(c *C) {
+	configured := map[string]string{
+		corev1.LabelOSStable: "linux",
+		"storage-tier":       "test",
+	}
+	windowsNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{corev1.LabelOSStable: "windows"}},
+	}
+
+	c.Assert(platformNodeSelector(configured, windowsNode), DeepEquals, map[string]string{
+		corev1.LabelOSStable: "windows",
+		"storage-tier":       "test",
+	})
+	// Deriving the platform selector must not mutate the setting shared by the
+	// Linux instance-manager construction path.
+	c.Assert(configured[corev1.LabelOSStable], Equals, "linux")
+}
+
 func newTestInstanceManagerController(lhClient *lhfake.Clientset, kubeClient *fake.Clientset, extensionsClient *apiextensionsfake.Clientset,
 	informerFactories *util.InformerFactories, controllerID string) (*InstanceManagerController, error) {
 	ds := datastore.NewDataStore(TestNamespace, lhClient, kubeClient, extensionsClient, informerFactories)

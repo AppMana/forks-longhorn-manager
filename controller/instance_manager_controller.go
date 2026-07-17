@@ -876,6 +876,11 @@ func (imc *InstanceManagerController) isSettingNodeSelectorSynced(setting *longh
 	if err != nil {
 		return false, err
 	}
+	kubeNode, err := imc.ds.GetKubernetesNodeRO(pod.Spec.NodeName)
+	if err != nil {
+		return false, err
+	}
+	newNodeSelector = platformNodeSelector(newNodeSelector, kubeNode)
 	if pod.Spec.NodeSelector == nil && len(newNodeSelector) == 0 {
 		return true, nil
 	}
@@ -1865,7 +1870,7 @@ func (imc *InstanceManagerController) createInstanceManagerPodSpec(im *longhorn.
 		return nil, errors.Wrapf(err, "failed to get kubernetes node %v for instance manager pod", im.Spec.NodeID)
 	}
 	if isWindowsKubernetesNode(kubeNode) {
-		return imc.createWindowsInstanceManagerPodSpec(im, tolerations, registrySecret, nodeSelector, dataEngine)
+		return imc.createWindowsInstanceManagerPodSpec(im, tolerations, registrySecret, nodeSelector, kubeNode, dataEngine)
 	}
 
 	logPath, err := imc.getLogPath()
@@ -2139,11 +2144,23 @@ func isWindowsKubernetesNode(node *corev1.Node) bool {
 	return strings.EqualFold(operatingSystem, "windows")
 }
 
+// platformNodeSelector preserves the configured system selector and applies
+// only the scheduling constraint required by the target operating system.
+// This keeps drift detection symmetric with pod construction when a mixed
+// cluster uses a Linux selector for the ordinary system components.
+func platformNodeSelector(nodeSelector map[string]string, node *corev1.Node) map[string]string {
+	result := cloneStringMap(nodeSelector)
+	if isWindowsKubernetesNode(node) {
+		result[corev1.LabelOSStable] = "windows"
+	}
+	return result
+}
+
 // createWindowsInstanceManagerPodSpec retains the same per-node instance manager
 // and per-volume child process model as Linux. Only the pod/host integration is
 // specialized for a Windows HostProcess container.
 func (imc *InstanceManagerController) createWindowsInstanceManagerPodSpec(im *longhorn.InstanceManager,
-	tolerations []corev1.Toleration, registrySecret string, nodeSelector map[string]string,
+	tolerations []corev1.Toleration, registrySecret string, nodeSelector map[string]string, kubeNode *corev1.Node,
 	dataEngine longhorn.DataEngineType) (*corev1.Pod, error) {
 	if !types.IsDataEngineV1(dataEngine) {
 		return nil, fmt.Errorf("Windows instance managers support the V1 data engine only")
@@ -2159,8 +2176,7 @@ func (imc *InstanceManagerController) createWindowsInstanceManagerPodSpec(im *lo
 	windowsOptions := &corev1.WindowsSecurityContextOptions{HostProcess: &hostProcess, RunAsUserName: &runAs}
 
 	podSpec.Spec.HostNetwork = true
-	podSpec.Spec.NodeSelector = cloneStringMap(nodeSelector)
-	podSpec.Spec.NodeSelector[corev1.LabelOSStable] = "windows"
+	podSpec.Spec.NodeSelector = platformNodeSelector(nodeSelector, kubeNode)
 	podSpec.Spec.SecurityContext = &corev1.PodSecurityContext{WindowsOptions: windowsOptions.DeepCopy()}
 	container.SecurityContext = &corev1.SecurityContext{WindowsOptions: windowsOptions.DeepCopy()}
 	// HostProcess absolute paths resolve on the host, not in the image root.
@@ -2179,11 +2195,15 @@ func (imc *InstanceManagerController) createWindowsInstanceManagerPodSpec(im *lo
 	if tz := os.Getenv(types.EnvTZ); tz != "" {
 		container.Env = append(container.Env, corev1.EnvVar{Name: types.EnvTZ, Value: tz})
 	}
+	podProbeTimeout, err := imc.ds.GetSettingAsInt(types.SettingNameInstanceManagerPodLivenessProbeTimeout)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to get %v setting", types.SettingNameInstanceManagerPodLivenessProbeTimeout)
+	}
 	container.LivenessProbe = &corev1.Probe{
 		ProbeHandler:        corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt(engineapi.InstanceManagerProcessManagerServiceDefaultPort)}},
 		InitialDelaySeconds: datastore.IMPodProbeInitialDelay,
-		TimeoutSeconds:      datastore.PodProbeTimeoutSeconds,
-		PeriodSeconds:       datastore.PodProbePeriodSeconds,
+		TimeoutSeconds:      int32(podProbeTimeout),
+		PeriodSeconds:       int32(podProbeTimeout + 1),
 		FailureThreshold:    datastore.IMPodLivenessProbeFailureThreshold,
 	}
 	// Windows reports a HostProcess container running before the process manager
