@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2531,7 +2532,11 @@ func (c *VolumeController) openVolumeDependentResources(v *longhorn.Volume, e *l
 	e.Spec.DesireState = longhorn.InstanceStateRunning
 	// The volume may be activated
 	e.Spec.DisableFrontend = v.Status.FrontendDisabled
-	e.Spec.Frontend = v.Spec.Frontend
+	engineFrontend, err := c.resolveEngineFrontendForNode(v, e.Spec.NodeID)
+	if err != nil {
+		return err
+	}
+	e.Spec.Frontend = engineFrontend
 	e.Spec.UblkQueueDepth = v.Spec.UblkQueueDepth
 	e.Spec.UblkNumberOfQueue = v.Spec.UblkNumberOfQueue
 
@@ -2589,6 +2594,11 @@ func (c *VolumeController) validateVolumeRuntimeCapabilities(v *longhorn.Volume,
 		image = v.Spec.Image
 	}
 	requirements := types.ResolveVolumeRequirements(v)
+	frontendOS, err := c.getKubernetesNodeOS(v.Spec.NodeID)
+	if err != nil {
+		return err
+	}
+	requirements.Frontend = resolveFrontendRequirementsForNode(v, frontendOS)
 	engineNode := v.Spec.NodeID
 	if e != nil && e.Spec.NodeID != "" {
 		engineNode = e.Spec.NodeID
@@ -4192,6 +4202,11 @@ func (c *VolumeController) checkOldAndNewEngineImagesForLiveUpgrade(v *longhorn.
 	}
 
 	requirements := types.ResolveVolumeRequirements(v)
+	frontendOS, err := c.getKubernetesNodeOS(frontendNode)
+	if err != nil {
+		return err
+	}
+	requirements.Frontend = resolveFrontendRequirementsForNode(v, frontendOS)
 	for _, image := range []*longhorn.EngineImage{oldImage, newImage} {
 		if err := c.checkEngineImageNodeCapabilities(image.Spec.Image, engineNode, "controller", requirements.Controller); err != nil {
 			return errors.Wrapf(err, "engine image %v cannot serve volume %v", image.Spec.Image, v.Name)
@@ -4222,6 +4237,48 @@ func (c *VolumeController) checkOldAndNewEngineImagesForLiveUpgrade(v *longhorn.
 	}
 
 	return nil
+}
+
+// resolveEngineFrontendForNode translates Longhorn's local block-device
+// frontend into the network iSCSI frontend required by a Windows V1 engine.
+// The volume frontend remains unchanged so the same volume can detach from a
+// Windows node and later attach to Linux; the Engine records the frontend for
+// its current host, which keeps create, monitoring, and live upgrade aligned.
+func (c *VolumeController) resolveEngineFrontendForNode(v *longhorn.Volume, nodeID string) (longhorn.VolumeFrontend, error) {
+	nodeOS, err := c.getKubernetesNodeOS(nodeID)
+	if err != nil {
+		return "", err
+	}
+	return resolveEngineFrontend(v.Spec.Frontend, v.Spec.DataEngine, nodeOS), nil
+}
+
+func (c *VolumeController) getKubernetesNodeOS(nodeID string) (string, error) {
+	if nodeID == "" {
+		return "", nil
+	}
+	node, err := c.ds.GetKubernetesNodeRO(nodeID)
+	if err != nil {
+		return "", errors.Wrapf(err, "failed to get Kubernetes node %v while resolving the engine frontend", nodeID)
+	}
+	return node.Labels[corev1.LabelOSStable], nil
+}
+
+func resolveEngineFrontend(frontend longhorn.VolumeFrontend, dataEngine longhorn.DataEngineType, nodeOS string) longhorn.VolumeFrontend {
+	if types.IsDataEngineV1(dataEngine) &&
+		frontend == longhorn.VolumeFrontendBlockDev &&
+		strings.EqualFold(nodeOS, "windows") {
+		return longhorn.VolumeFrontendISCSI
+	}
+	return frontend
+}
+
+func resolveFrontendRequirementsForNode(v *longhorn.Volume, nodeOS string) []string {
+	requirements := types.ResolveVolumeRequirements(v).Frontend
+	if resolveEngineFrontend(v.Spec.Frontend, v.Spec.DataEngine, nodeOS) == longhorn.VolumeFrontendISCSI &&
+		!slices.Contains(requirements, types.FrontendCapabilityISCSI) {
+		requirements = append(requirements, types.FrontendCapabilityISCSI)
+	}
+	return requirements
 }
 
 func (c *VolumeController) checkEngineImageNodeCapabilities(image, node, role string, required []string) error {

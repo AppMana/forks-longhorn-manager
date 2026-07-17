@@ -2403,6 +2403,34 @@ func (s *TestSuite) TestEngineFrontendHelpers(c *C) {
 	c.Assert(isEngineFrontendReadyForNode(efs, TestNode2), Equals, true)
 }
 
+func (s *TestSuite) TestResolveEngineFrontendForNode(c *C) {
+	testCases := []struct {
+		name       string
+		frontend   longhorn.VolumeFrontend
+		dataEngine longhorn.DataEngineType
+		nodeOS     string
+		expected   longhorn.VolumeFrontend
+	}{
+		{"Linux V1 keeps local block device", longhorn.VolumeFrontendBlockDev, longhorn.DataEngineTypeV1, "linux", longhorn.VolumeFrontendBlockDev},
+		{"Windows V1 uses network iSCSI", longhorn.VolumeFrontendBlockDev, longhorn.DataEngineTypeV1, "windows", longhorn.VolumeFrontendISCSI},
+		{"Windows OS comparison is case insensitive", longhorn.VolumeFrontendBlockDev, longhorn.DataEngineTypeV1, "Windows", longhorn.VolumeFrontendISCSI},
+		{"explicit iSCSI is preserved", longhorn.VolumeFrontendISCSI, longhorn.DataEngineTypeV1, "linux", longhorn.VolumeFrontendISCSI},
+		{"V2 frontend architecture is unchanged", longhorn.VolumeFrontendBlockDev, longhorn.DataEngineTypeV2, "windows", longhorn.VolumeFrontendBlockDev},
+		{"disabled frontend is preserved", longhorn.VolumeFrontendEmpty, longhorn.DataEngineTypeV1, "windows", longhorn.VolumeFrontendEmpty},
+	}
+
+	for _, tc := range testCases {
+		c.Assert(resolveEngineFrontend(tc.frontend, tc.dataEngine, tc.nodeOS), Equals, tc.expected, Commentf("case=%s", tc.name))
+	}
+
+	volume := &longhorn.Volume{Spec: longhorn.VolumeSpec{
+		Frontend:   longhorn.VolumeFrontendBlockDev,
+		DataEngine: longhorn.DataEngineTypeV1,
+	}}
+	c.Assert(resolveFrontendRequirementsForNode(volume, "linux"), IsNil)
+	c.Assert(resolveFrontendRequirementsForNode(volume, "windows"), DeepEquals, []string{types.FrontendCapabilityISCSI})
+}
+
 func (s *TestSuite) TestProcessMigrationV2CreatesMigrationEngineFrontend(c *C) {
 	datastore.SkipListerCheck = true
 
