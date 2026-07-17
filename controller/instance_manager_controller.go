@@ -2152,8 +2152,14 @@ func (imc *InstanceManagerController) createWindowsInstanceManagerPodSpec(im *lo
 	podSpec.Spec.NodeSelector[corev1.LabelOSStable] = "windows"
 	podSpec.Spec.SecurityContext = &corev1.PodSecurityContext{WindowsOptions: windowsOptions.DeepCopy()}
 	container.SecurityContext = &corev1.SecurityContext{WindowsOptions: windowsOptions.DeepCopy()}
-	container.Command = []string{`C:\usr\local\bin\longhorn-instance-manager.exe`}
-	container.Args = []string{"--debug", "daemon", "--listen", fmt.Sprintf(":%d", engineapi.InstanceManagerProcessManagerServiceDefaultPort)}
+	// HostProcess absolute paths resolve on the host, not in the image root.
+	// cmd expands the sandbox mount supplied by kubelet before execing the
+	// image binary and preserves the ordinary instance-manager arguments.
+	container.Command = []string{`C:\Windows\System32\cmd.exe`, "/S", "/C"}
+	container.Args = []string{
+		`%CONTAINER_SANDBOX_MOUNT_POINT%\usr\local\bin\longhorn-instance-manager.exe`,
+		"--debug", "daemon", "--listen", fmt.Sprintf(":%d", engineapi.InstanceManagerProcessManagerServiceDefaultPort),
+	}
 	container.Env = []corev1.EnvVar{
 		{Name: "TLS_DIR", Value: `C:\var\lib\longhorn\tls`},
 		{Name: types.EnvPodIP, ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "status.podIP"}}},

@@ -22,13 +22,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientset "k8s.io/client-go/kubernetes"
 
-	"github.com/longhorn/go-iscsi-helper/iscsi"
-
-	iscsiutil "github.com/longhorn/go-iscsi-helper/util"
-
-	lhns "github.com/longhorn/go-common-libs/ns"
-	lhtypes "github.com/longhorn/go-common-libs/types"
-
 	"github.com/longhorn/longhorn-manager/api"
 	"github.com/longhorn/longhorn-manager/controller"
 	"github.com/longhorn/longhorn-manager/datastore"
@@ -283,7 +276,7 @@ func startManager(c *cli.Context) error {
 	kubeconfigPath := c.String(FlagKubeConfig)
 
 	if err := environmentCheck(); err != nil {
-		return errors.Wrap(err, "failed to check environment, please make sure you have iscsiadm/open-iscsi installed on the host")
+		return errors.Wrap(err, "failed to check environment for an available iSCSI initiator")
 	}
 
 	currentNodeID, err := util.GetRequiredEnv(types.EnvNodeName)
@@ -300,9 +293,11 @@ func startManager(c *cli.Context) error {
 
 	logger := logrus.StandardLogger().WithField("node", currentNodeID)
 
-	err = startWebhooksByLeaderElection(ctx, kubeconfigPath, currentNodeID)
-	if err != nil {
-		return err
+	if platformStartsWebhooks() {
+		err = startWebhooksByLeaderElection(ctx, kubeconfigPath, currentNodeID)
+		if err != nil {
+			return err
+		}
 	}
 
 	clients, err := client.NewClients(kubeconfigPath, true, ctx.Done())
@@ -317,8 +312,10 @@ func startManager(c *cli.Context) error {
 		return err
 	}
 
-	if err := clients.Datastore.AddLabelToManagerPod(currentNodeID, types.GetRecoveryBackendLabel()); err != nil {
-		return err
+	if platformStartsWebhooks() {
+		if err := clients.Datastore.AddLabelToManagerPod(currentNodeID, types.GetRecoveryBackendLabel()); err != nil {
+			return err
+		}
 	}
 
 	if err := upgrade.Upgrade(kubeconfigPath, currentNodeID, managerImage, c.Bool(FlagUpgradeVersionCheck)); err != nil {
@@ -394,15 +391,7 @@ func startManager(c *cli.Context) error {
 }
 
 func environmentCheck() error {
-	// Here we only check if the necessary tool the iscsiadm is installed when Longhorn starts up.
-	// Others tools and settings like kernel versions, multipathd, nfs client, etc. are checked in the node controller (every 30 sec).
-	namespaces := []lhtypes.Namespace{lhtypes.NamespaceMnt, lhtypes.NamespaceNet}
-	nsexec, err := lhns.NewNamespaceExecutor(iscsiutil.ISCSIdProcess, lhtypes.HostProcDirectory, namespaces)
-	if err != nil {
-		return err
-	}
-
-	return iscsi.CheckForInitiatorExistence(nsexec)
+	return platformEnvironmentCheck()
 }
 
 func updateRegistrySecretName(m *manager.VolumeManager) error {

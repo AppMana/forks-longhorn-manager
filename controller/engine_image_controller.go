@@ -1060,7 +1060,8 @@ func (ic *EngineImageController) createWindowsEngineImageDaemonSetSpec(ei *longh
 	script := strings.Join([]string{
 		`$ErrorActionPreference = 'Stop'`,
 		`New-Item -ItemType Directory -Force -Path C:\data | Out-Null`,
-		`Copy-Item -Force C:\usr\local\bin\longhorn.exe C:\data\longhorn.exe`,
+		`$source = Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'usr\local\bin\longhorn.exe'`,
+		`Copy-Item -Force $source C:\data\longhorn.exe`,
 		`try { while ($true) { Start-Sleep -Seconds 3600 } } finally { Remove-Item -Force -ErrorAction SilentlyContinue C:\data\longhorn.exe }`,
 	}, "; ")
 	probe := []string{"powershell.exe", "-NoLogo", "-NonInteractive", "-Command",
