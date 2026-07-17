@@ -31,7 +31,7 @@ func CopyDirectory(source, destination string, overWrite bool) (err error) {
 		return err
 	}
 
-	if strings.Count(srcDir, "/") < 2 || strings.Count(dstDir, "/") < 2 {
+	if isTopLevelDirectory(srcDir) || isTopLevelDirectory(dstDir) {
 		return errors.Errorf("prohibit copying the content for the top level of directory %v or %v", srcDir, dstDir)
 	}
 
@@ -79,7 +79,7 @@ func DeleteDirectory(directory string) (err error) {
 		return err
 	}
 
-	if strings.Count(dir, "/") < 2 {
+	if isTopLevelDirectory(dir) {
 		return errors.Errorf("prohibit removing the top level of directory %v", dir)
 	}
 
@@ -96,6 +96,13 @@ func DeleteDirectory(directory string) (err error) {
 
 	_, err = RunFunc(fn, 0)
 	return err
+}
+
+// isTopLevelDirectory uses the native path separator because filepath.Clean
+// normalizes absolute paths for the host OS. Counting only '/' classifies
+// every Windows path as top-level and prevents safe replica cleanup.
+func isTopLevelDirectory(directory string) bool {
+	return strings.Count(directory, string(filepath.Separator)) < 2
 }
 
 // ReadDirectory switches to the host namespace and reads the content of the
