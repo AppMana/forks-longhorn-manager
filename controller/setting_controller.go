@@ -849,6 +849,11 @@ func (sc *SettingController) getPodsWithIncorrectCNI(storageNetwork *longhorn.Se
 
 	// Check Pods for incorrect CNI annotation.
 	for _, pod := range pods {
+		// Windows HostProcess instance managers intentionally use their host
+		// address as the storage address and cannot consume a Multus attachment.
+		if usesWindowsHostStorageNetwork(pod) {
+			continue
+		}
 		if pod.Annotations[annotKey] == annotValue {
 			continue
 		}

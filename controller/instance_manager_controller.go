@@ -952,6 +952,13 @@ func (imc *InstanceManagerController) isSettingInstanceManagerPodLivenessProbeTi
 }
 
 func (imc *InstanceManagerController) isSettingStorageNetworkSynced(setting *longhorn.Setting, pod *corev1.Pod) (bool, error) {
+	// Windows HostProcess containers share the host network namespace. Their
+	// storage address is therefore the node/pod IP and there is no secondary
+	// CNI attachment to reconcile. Linux instance managers continue to use the
+	// configured Longhorn storage network exactly as before.
+	if usesWindowsHostStorageNetwork(pod) {
+		return true, nil
+	}
 	nadAnnot := string(types.CNIAnnotationNetworks)
 	nadAnnotValue := types.CreateCniAnnotationFromSetting(setting, types.StorageNetworkInterface)
 	return pod.Annotations[nadAnnot] == nadAnnotValue, nil
@@ -2144,6 +2151,14 @@ func isWindowsKubernetesNode(node *corev1.Node) bool {
 	return strings.EqualFold(operatingSystem, "windows")
 }
 
+// usesWindowsHostStorageNetwork identifies HostProcess pods whose data-plane
+// address is supplied by the Windows host rather than a Multus attachment.
+// Checking both platform and host networking avoids weakening annotation
+// reconciliation for ordinary Windows pods if support is added later.
+func usesWindowsHostStorageNetwork(pod *corev1.Pod) bool {
+	return pod.Spec.HostNetwork && strings.EqualFold(pod.Spec.NodeSelector[corev1.LabelOSStable], "windows")
+}
+
 // platformNodeSelector preserves the configured system selector and applies
 // only the scheduling constraint required by the target operating system.
 // This keeps drift detection symmetric with pod construction when a mixed
@@ -2177,6 +2192,10 @@ func (imc *InstanceManagerController) createWindowsInstanceManagerPodSpec(im *lo
 
 	podSpec.Spec.HostNetwork = true
 	podSpec.Spec.NodeSelector = platformNodeSelector(nodeSelector, kubeNode)
+	// Multus does not manage the HostProcess network namespace. The pod IP is
+	// the node's data address and is advertised as the instance-manager storage
+	// IP, allowing Windows and Linux processes to use one routable data plane.
+	delete(podSpec.Annotations, string(types.CNIAnnotationNetworks))
 	podSpec.Spec.SecurityContext = &corev1.PodSecurityContext{WindowsOptions: windowsOptions.DeepCopy()}
 	container.SecurityContext = &corev1.SecurityContext{WindowsOptions: windowsOptions.DeepCopy()}
 	// HostProcess absolute paths resolve on the host, not in the image root.

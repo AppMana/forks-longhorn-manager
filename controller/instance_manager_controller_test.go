@@ -170,6 +170,22 @@ func (s *TestSuite) TestPlatformNodeSelector(c *C) {
 	c.Assert(configured[corev1.LabelOSStable], Equals, "linux")
 }
 
+func (s *TestSuite) TestWindowsHostStorageNetwork(c *C) {
+	windowsHostProcess := &corev1.Pod{Spec: corev1.PodSpec{
+		HostNetwork:  true,
+		NodeSelector: map[string]string{corev1.LabelOSStable: "windows"},
+	}}
+	c.Assert(usesWindowsHostStorageNetwork(windowsHostProcess), Equals, true)
+
+	windowsPodNetwork := windowsHostProcess.DeepCopy()
+	windowsPodNetwork.Spec.HostNetwork = false
+	c.Assert(usesWindowsHostStorageNetwork(windowsPodNetwork), Equals, false)
+
+	linuxHostNetwork := windowsHostProcess.DeepCopy()
+	linuxHostNetwork.Spec.NodeSelector[corev1.LabelOSStable] = "linux"
+	c.Assert(usesWindowsHostStorageNetwork(linuxHostNetwork), Equals, false)
+}
+
 func newTestInstanceManagerController(lhClient *lhfake.Clientset, kubeClient *fake.Clientset, extensionsClient *apiextensionsfake.Clientset,
 	informerFactories *util.InformerFactories, controllerID string) (*InstanceManagerController, error) {
 	ds := datastore.NewDataStore(TestNamespace, lhClient, kubeClient, extensionsClient, informerFactories)
