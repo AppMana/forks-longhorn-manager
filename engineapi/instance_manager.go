@@ -129,9 +129,9 @@ func NewInstanceManagerClient(im *longhorn.InstanceManager, allowUnknown bool) (
 
 		// check for tls cert file presence
 		processManagerClient, err = imclient.NewProcessManagerClientWithTLS(ctx, cancel, endpoint,
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSCAFile),
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSCertFile),
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSKeyFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSCAFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSCertFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSKeyFile),
 			"longhorn-backend.longhorn-system",
 		)
 		if err != nil {
@@ -162,9 +162,9 @@ func NewInstanceManagerClient(im *longhorn.InstanceManager, allowUnknown bool) (
 
 		// check for tls cert file presence
 		instanceServiceClient, err = imclient.NewInstanceServiceClientWithTLS(ctx, cancel, endpoint,
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSCAFile),
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSCertFile),
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSKeyFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSCAFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSCertFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSKeyFile),
 			"longhorn-backend.longhorn-system",
 		)
 		if err != nil {

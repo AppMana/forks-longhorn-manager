@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 
@@ -382,6 +383,17 @@ func (s *TestSuite) TestWindowsEngineBinaryDirectory(c *C) {
 		Equals,
 		`C:\var\lib\longhorn\engine-binaries\registry.example.com-longhorn-engine-v1.12.0`,
 	)
+}
+
+func (s *TestSuite) TestWindowsEngineImageUsesSandboxVolumeMount(c *C) {
+	ic := &EngineImageController{}
+	ei := newEngineImage(TestEngineImage, longhorn.EngineImageStateDeploying)
+	daemonSet := ic.createWindowsEngineImageDaemonSetSpec(ei, "windows-engine", nil, "", "", corev1.PullIfNotPresent, nil)
+	container := daemonSet.Spec.Template.Spec.Containers[0]
+
+	c.Assert(container.Args, HasLen, 1)
+	c.Assert(strings.Contains(container.Args[0], `$data = Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'data'`), Equals, true)
+	c.Assert(strings.Contains(container.ReadinessProbe.Exec.Command[4], `Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'data\longhorn.exe'`), Equals, true)
 }
 
 func (s *TestSuite) TestDecodeEngineImageCapabilities(c *C) {

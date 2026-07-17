@@ -503,7 +503,7 @@ func (ic *EngineImageController) probeEngineImageCapabilities(pod *corev1.Pod) (
 	}
 	command := []string{"/data/longhorn", "version", "--client-only"}
 	if pod.Spec.NodeSelector[corev1.LabelOSStable] == "windows" || pod.Labels[windowsEngineImageLabel] != "" {
-		command = []string{`C:\data\longhorn.exe`, "version", "--client-only"}
+		command = []string{`C:\Windows\System32\cmd.exe`, "/S", "/C", `%CONTAINER_SANDBOX_MOUNT_POINT%\data\longhorn.exe`, "version", "--client-only"}
 	}
 	execRequest := ic.kubeClient.CoreV1().RESTClient().Post().
 		Resource("pods").
@@ -1059,13 +1059,15 @@ func (ic *EngineImageController) createWindowsEngineImageDaemonSetSpec(ei *longh
 	hostDirectory := windowsEngineBinaryDirectory(ei.Spec.Image)
 	script := strings.Join([]string{
 		`$ErrorActionPreference = 'Stop'`,
-		`New-Item -ItemType Directory -Force -Path C:\data | Out-Null`,
+		`$data = Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'data'`,
+		`New-Item -ItemType Directory -Force -Path $data | Out-Null`,
 		`$source = Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'usr\local\bin\longhorn.exe'`,
-		`Copy-Item -Force $source C:\data\longhorn.exe`,
-		`try { while ($true) { Start-Sleep -Seconds 3600 } } finally { Remove-Item -Force -ErrorAction SilentlyContinue C:\data\longhorn.exe }`,
+		`$binary = Join-Path $data 'longhorn.exe'`,
+		`Copy-Item -Force $source $binary`,
+		`try { while ($true) { Start-Sleep -Seconds 3600 } } finally { Remove-Item -Force -ErrorAction SilentlyContinue $binary }`,
 	}, "; ")
 	probe := []string{"powershell.exe", "-NoLogo", "-NonInteractive", "-Command",
-		`$productType=(Get-CimInstance Win32_OperatingSystem).ProductType; $iscsi=(Get-Service MSiSCSI).Status; if (($productType -in 2,3) -and ($iscsi -eq 'Running') -and (Test-Path C:\data\longhorn.exe) -and (& C:\data\longhorn.exe version --client-only)) { exit 0 }; exit 1`}
+		`$productType=(Get-CimInstance Win32_OperatingSystem).ProductType; $iscsi=(Get-Service MSiSCSI).Status; $binary=Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'data\longhorn.exe'; if (($productType -in 2,3) -and ($iscsi -eq 'Running') -and (Test-Path $binary) -and (& $binary version --client-only)) { exit 0 }; exit 1`}
 	maxUnavailable := intstr.FromString("100%")
 
 	daemonSet := &appsv1.DaemonSet{

@@ -99,9 +99,9 @@ func NewEngineClientProxy(im *longhorn.InstanceManager, logger logrus.FieldLogge
 			cancel,
 			ip,
 			InstanceManagerProxyServiceDefaultPort,
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSCAFile),
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSCertFile),
-			filepath.Join(types.TLSDirectoryInContainer, types.TLSKeyFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSCAFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSCertFile),
+			filepath.Join(types.ResolveContainerMountPath(types.TLSDirectoryInContainer), types.TLSKeyFile),
 			"longhorn-backend.longhorn-system",
 		)
 		if err != nil {
