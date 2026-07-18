@@ -186,6 +186,10 @@ func (s *Server) attachment(longhornVolumeID string, capability *csipb.VolumeCap
 	if volume.DataEngine != string(longhorn.DataEngineTypeV1) || volume.Encrypted || volume.AccessMode == string(longhorn.AccessModeReadWriteMany) {
 		return nil, status.Errorf(codes.Unimplemented, "volume %s requests an unsupported Windows data path", longhornVolumeID)
 	}
+	return s.attachmentFromVolume(volume, capability)
+}
+
+func (s *Server) attachmentFromVolume(volume *longhornclient.Volume, capability *csipb.VolumeCapability) (*attachment, error) {
 	var controller *longhornclient.Controller
 	for i := range volume.Controllers {
 		if volume.Controllers[i].HostId == s.nodeID {
@@ -194,7 +198,7 @@ func (s *Server) attachment(longhornVolumeID string, capability *csipb.VolumeCap
 		}
 	}
 	if controller == nil || controller.Endpoint == "" {
-		return nil, status.Errorf(codes.FailedPrecondition, "volume %s has no engine frontend on node %s", longhornVolumeID, s.nodeID)
+		return nil, status.Errorf(codes.FailedPrecondition, "volume %s has no engine frontend on node %s", volume.Name, s.nodeID)
 	}
 	portal, iqn, err := parseISCSIEndpoint(controller.Endpoint)
 	if err != nil {
@@ -335,8 +339,14 @@ func (s *Server) NodeUnstageVolume(ctx context.Context, req *csipb.NodeUnstageVo
 			_, _ = s.disk.SetDiskState(ctx, &diskapi.SetDiskStateRequest{DiskNumber: disk.DiskNumber, IsOnline: false})
 		}
 	}
-	if attachment, attachErr := s.attachment(req.VolumeId, mountCapability("ntfs")); attachErr == nil {
-		_, _ = s.iscsi.DisconnectTarget(ctx, &iscsiapi.DisconnectTargetRequest{TargetPortal: attachment.portal, Iqn: attachment.iqn})
+	// Unstage races controller detach and PVC deletion. The normal attachment
+	// lookup deliberately rejects a volume once it is no longer ready, but the
+	// controller endpoint is still sufficient to log out the host session. Use
+	// it directly so deletion cannot strand an iSCSI connection and finalizer.
+	if volume, getErr := s.api.Volume.ById(req.VolumeId); getErr == nil && volume != nil {
+		if attachment, attachErr := s.attachmentFromVolume(volume, mountCapability("ntfs")); attachErr == nil {
+			_, _ = s.iscsi.DisconnectTarget(ctx, &iscsiapi.DisconnectTargetRequest{TargetPortal: attachment.portal, Iqn: attachment.iqn})
+		}
 	}
 	return &csipb.NodeUnstageVolumeResponse{}, nil
 }
