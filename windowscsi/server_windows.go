@@ -277,13 +277,31 @@ func (s *Server) NodePublishVolume(ctx context.Context, req *csipb.NodePublishVo
 	if req.Readonly {
 		return nil, status.Error(codes.Unimplemented, "read-only Windows mounts are not supported")
 	}
-	if err := s.ensureDirectory(ctx, req.TargetPath); err != nil {
+	target := windowsPath(req.TargetPath)
+	exists, err := s.filesystem.PathExists(ctx, &filesystemapi.PathExistsRequest{Path: target})
+	if err != nil {
 		return nil, err
 	}
-	_, err := s.filesystem.CreateSymlink(ctx, &filesystemapi.CreateSymlinkRequest{
-		SourcePath: windowsPath(req.StagingTargetPath), TargetPath: windowsPath(req.TargetPath)})
+	if exists.Exists {
+		isLink, linkErr := s.filesystem.IsSymlink(ctx, &filesystemapi.IsSymlinkRequest{Path: target})
+		if linkErr == nil && isLink.IsSymlink {
+			return &csipb.NodePublishVolumeResponse{}, nil
+		}
+		// Kubelet pre-creates an empty target directory on Windows. Remove only
+		// that directory; Force=false deliberately refuses recursive deletion.
+		if _, err := s.filesystem.Rmdir(ctx, &filesystemapi.RmdirRequest{Path: target, Force: false}); err != nil {
+			return nil, err
+		}
+	}
+	// Rmdir removes only the kubelet-created leaf. Keep publication robust to a
+	// retry racing kubelet cleanup by making sure its parent still exists.
+	if err := s.ensureDirectory(ctx, filepath.Dir(target)); err != nil {
+		return nil, err
+	}
+	_, err = s.filesystem.CreateSymlink(ctx, &filesystemapi.CreateSymlinkRequest{
+		SourcePath: windowsPath(req.StagingTargetPath), TargetPath: target})
 	if err != nil {
-		isLink, checkErr := s.filesystem.IsSymlink(ctx, &filesystemapi.IsSymlinkRequest{Path: windowsPath(req.TargetPath)})
+		isLink, checkErr := s.filesystem.IsSymlink(ctx, &filesystemapi.IsSymlinkRequest{Path: target})
 		if checkErr != nil || !isLink.IsSymlink {
 			return nil, err
 		}
