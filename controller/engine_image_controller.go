@@ -315,6 +315,10 @@ func (ic *EngineImageController) syncEngineImage(key string) (err error) {
 		engineImage.Status.State = longhorn.EngineImageStateDeploying
 		return nil
 	}
+	ds, err = ic.ensureLinuxEngineImageDaemonSetHostPath(ds, engineImage.Spec.Image)
+	if err != nil {
+		return err
+	}
 	if err := ic.ensureWindowsEngineImageDaemonSet(engineImage, ds.Spec.Template.Spec.Tolerations, ds.Spec.Template.Spec.PriorityClassName,
 		registrySecretFromPodSpec(ds.Spec.Template.Spec), ds.Spec.Template.Spec.Containers[0].ImagePullPolicy, nodeSelectorFromPodSpec(ds.Spec.Template.Spec)); err != nil {
 		return err
@@ -1008,7 +1012,7 @@ func (ic *EngineImageController) createEngineImageDaemonSetSpec(ei *longhorn.Eng
 							Name: "data",
 							VolumeSource: corev1.VolumeSource{
 								HostPath: &corev1.HostPathVolumeSource{
-									Path: types.GetEngineBinaryDirectoryOnHostForImage(image),
+									Path: linuxEngineBinaryDirectory(image),
 								},
 							},
 						},
@@ -1028,6 +1032,31 @@ func (ic *EngineImageController) createEngineImageDaemonSetSpec(ei *longhorn.Eng
 	types.AddGoCoverDirToDaemonSet(d)
 
 	return d, nil
+}
+
+// ensureLinuxEngineImageDaemonSetHostPath keeps the target node's path
+// independent of the OS running this controller. EngineImage controllers run
+// on both Linux and Windows managers, so a compile-time platform helper must
+// not be used while constructing a DaemonSet for another OS.
+func (ic *EngineImageController) ensureLinuxEngineImageDaemonSetHostPath(ds *appsv1.DaemonSet, image string) (*appsv1.DaemonSet, error) {
+	desired := linuxEngineBinaryDirectory(image)
+	for i := range ds.Spec.Template.Spec.Volumes {
+		volume := &ds.Spec.Template.Spec.Volumes[i]
+		if volume.Name != "data" {
+			continue
+		}
+		if volume.HostPath == nil {
+			return nil, errors.Errorf("Linux engine image daemonset %s data volume is not a host path", ds.Name)
+		}
+		if volume.HostPath.Path == desired {
+			return ds, nil
+		}
+		updated := ds.DeepCopy()
+		updated.Spec.Template.Spec.Volumes[i].HostPath.Path = desired
+		result, err := ic.kubeClient.AppsV1().DaemonSets(ic.namespace).Update(context.TODO(), updated, metav1.UpdateOptions{})
+		return result, errors.Wrapf(err, "update Linux engine image daemonset %s host path", ds.Name)
+	}
+	return nil, errors.Errorf("Linux engine image daemonset %s has no data volume", ds.Name)
 }
 
 func (ic *EngineImageController) ensureWindowsEngineImageDaemonSet(ei *longhorn.EngineImage, tolerations []corev1.Toleration,
@@ -1153,6 +1182,10 @@ func windowsEngineImageDaemonSetName(linuxName string) string {
 
 func windowsEngineBinaryDirectory(image string) string {
 	return `C:\var\lib\longhorn\engine-binaries\` + types.GetImageCanonicalName(image)
+}
+
+func linuxEngineBinaryDirectory(image string) string {
+	return types.EngineBinaryDirectoryOnHost + types.GetImageCanonicalName(image)
 }
 
 func cloneStringMap(source map[string]string) map[string]string {

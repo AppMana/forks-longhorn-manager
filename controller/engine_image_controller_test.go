@@ -385,6 +385,29 @@ func (s *TestSuite) TestWindowsEngineBinaryDirectory(c *C) {
 	)
 }
 
+func (s *TestSuite) TestLinuxEngineBinaryDirectoryIsTargetSpecific(c *C) {
+	image := "registry.example.com/longhorn/engine:v1.12.0"
+	c.Assert(
+		linuxEngineBinaryDirectory(image),
+		Equals,
+		"/var/lib/longhorn/engine-binaries/registry.example.com-longhorn-engine-v1.12.0",
+	)
+
+	daemonSet := &appv1.DaemonSet{
+		ObjectMeta: metav1.ObjectMeta{Name: "engine-image", Namespace: TestNamespace},
+		Spec: appv1.DaemonSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
+			Name: "data", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{
+				Path: `C:\var\lib\longhorn\engine-binaries\stale`,
+			}},
+		}}}}},
+	}
+	kubeClient := fake.NewSimpleClientset(daemonSet) // nolint: staticcheck
+	ic := &EngineImageController{kubeClient: kubeClient, namespace: TestNamespace}
+	updated, err := ic.ensureLinuxEngineImageDaemonSetHostPath(daemonSet, image)
+	c.Assert(err, IsNil)
+	c.Assert(updated.Spec.Template.Spec.Volumes[0].HostPath.Path, Equals, linuxEngineBinaryDirectory(image))
+}
+
 func (s *TestSuite) TestWindowsEngineImageUsesSandboxVolumeMount(c *C) {
 	ic := &EngineImageController{}
 	ei := newEngineImage(TestEngineImage, longhorn.EngineImageStateDeploying)
