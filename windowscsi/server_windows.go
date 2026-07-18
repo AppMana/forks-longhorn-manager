@@ -362,6 +362,14 @@ func (s *Server) NodeExpandVolume(ctx context.Context, req *csipb.NodeExpandVolu
 }
 
 func (s *Server) ensurePortal(ctx context.Context, portal *iscsiapi.TargetPortal, iqn string) error {
+	// A previous NodeStageVolume attempt may have refreshed this shared portal
+	// before its kubelet deadline expired. Check the cached discovery state
+	// first so a retry does not repeat the expensive SendTargets refresh.
+	if targets, err := s.iscsi.DiscoverTargetPortal(ctx, &iscsiapi.DiscoverTargetPortalRequest{TargetPortal: portal}); err == nil &&
+		targetListContains(targets.Iqns, iqn) {
+		return nil
+	}
+
 	// AddTargetPortal is an idempotent upsert in the Windows csi-proxy fork:
 	// it creates a missing portal and refreshes SendTargets on an existing one.
 	// Refreshing is essential for Longhorn's shared portal because its IQN set
@@ -373,12 +381,19 @@ func (s *Server) ensurePortal(ctx context.Context, portal *iscsiapi.TargetPortal
 	if err != nil {
 		return err
 	}
-	for _, target := range targets.Iqns {
-		if strings.EqualFold(target, iqn) {
-			return nil
-		}
+	if targetListContains(targets.Iqns, iqn) {
+		return nil
 	}
 	return status.Errorf(codes.NotFound, "iSCSI target %s was not discovered at %s:%d", iqn, portal.TargetAddress, portal.TargetPort)
+}
+
+func targetListContains(targets []string, iqn string) bool {
+	for _, target := range targets {
+		if strings.EqualFold(target, iqn) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) targetDisks(ctx context.Context, attachment *attachment) ([]string, error) {

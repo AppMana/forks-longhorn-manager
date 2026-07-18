@@ -30,3 +30,13 @@ func TestWindowsPathFallsBackToSystemRoot(t *testing.T) {
 		t.Fatalf("windowsPath() = %q, want %q", got, want)
 	}
 }
+
+func TestTargetListContainsIsCaseInsensitive(t *testing.T) {
+	targets := []string{"iqn.2026-07.io.longhorn:one", "IQN.2026-07.IO.LONGHORN:TWO"}
+	if !targetListContains(targets, "iqn.2026-07.io.longhorn:two") {
+		t.Fatal("targetListContains did not find an existing target case-insensitively")
+	}
+	if targetListContains(targets, "iqn.2026-07.io.longhorn:missing") {
+		t.Fatal("targetListContains found a target that was not present")
+	}
+}
