@@ -393,7 +393,20 @@ func (s *TestSuite) TestWindowsEngineImageUsesSandboxVolumeMount(c *C) {
 
 	c.Assert(container.Args, HasLen, 1)
 	c.Assert(strings.Contains(container.Args[0], `$data = Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'data'`), Equals, true)
+	c.Assert(strings.Contains(container.Args[0], `if (-not (Test-Path -LiteralPath $binary))`), Equals, true)
+	c.Assert(strings.Contains(container.Args[0], `Remove-Item -Force -ErrorAction SilentlyContinue $binary`), Equals, false)
 	c.Assert(strings.Contains(container.ReadinessProbe.Exec.Command[4], `Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'data\longhorn.exe'`), Equals, true)
+	c.Assert(strings.Contains(container.LivenessProbe.Exec.Command[4], `version --client-only`), Equals, false)
+	c.Assert(container.ReadinessProbe.TimeoutSeconds, Equals, int32(15))
+	c.Assert(container.LivenessProbe.TimeoutSeconds, Equals, int32(10))
+
+	existing := container.DeepCopy()
+	// API defaulting fills this field after creation; it must not cause an
+	// endless DaemonSet update loop.
+	existing.ReadinessProbe.SuccessThreshold = 1
+	c.Assert(windowsEngineImageStagingCurrent(*existing, container), Equals, true)
+	existing.Args = []string{"stale staging command"}
+	c.Assert(windowsEngineImageStagingCurrent(*existing, container), Equals, false)
 }
 
 func (s *TestSuite) TestDecodeEngineImageCapabilities(c *C) {

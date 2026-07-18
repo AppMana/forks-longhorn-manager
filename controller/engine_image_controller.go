@@ -1033,19 +1033,48 @@ func (ic *EngineImageController) createEngineImageDaemonSetSpec(ei *longhorn.Eng
 func (ic *EngineImageController) ensureWindowsEngineImageDaemonSet(ei *longhorn.EngineImage, tolerations []corev1.Toleration,
 	priorityClass, registrySecret string, imagePullPolicy corev1.PullPolicy, nodeSelector map[string]string) error {
 	name := windowsEngineImageDaemonSetName(types.GetDaemonSetNameFromEngineImageName(ei.Name))
-	_, err := ic.kubeClient.AppsV1().DaemonSets(ic.namespace).Get(context.TODO(), name, metav1.GetOptions{})
+	desired := ic.createWindowsEngineImageDaemonSetSpec(ei, name, tolerations, priorityClass, registrySecret, imagePullPolicy, nodeSelector)
+	existing, err := ic.kubeClient.AppsV1().DaemonSets(ic.namespace).Get(context.TODO(), name, metav1.GetOptions{})
 	if err == nil {
-		return nil
+		if len(existing.Spec.Template.Spec.Containers) == 1 && windowsEngineImageStagingCurrent(
+			existing.Spec.Template.Spec.Containers[0], desired.Spec.Template.Spec.Containers[0]) {
+			return nil
+		}
+		// Reconcile the staging container when manager upgrades change Windows
+		// process semantics. In particular, an old liveness probe must not keep
+		// restarting a pod that owns an in-use executable.
+		existing.Spec.Template.Spec.Containers = desired.Spec.Template.Spec.Containers
+		existing.Spec.Template.Spec.InitContainers = desired.Spec.Template.Spec.InitContainers
+		_, err = ic.kubeClient.AppsV1().DaemonSets(ic.namespace).Update(context.TODO(), existing, metav1.UpdateOptions{})
+		return errors.Wrapf(err, "update Windows engine image daemonset %s", name)
 	}
 	if !apierrors.IsNotFound(err) {
 		return err
 	}
-	daemonSet := ic.createWindowsEngineImageDaemonSetSpec(ei, name, tolerations, priorityClass, registrySecret, imagePullPolicy, nodeSelector)
-	_, err = ic.kubeClient.AppsV1().DaemonSets(ic.namespace).Create(context.TODO(), daemonSet, metav1.CreateOptions{})
+	_, err = ic.kubeClient.AppsV1().DaemonSets(ic.namespace).Create(context.TODO(), desired, metav1.CreateOptions{})
 	if apierrors.IsAlreadyExists(err) {
 		return nil
 	}
 	return errors.Wrapf(err, "create Windows engine image daemonset %s", name)
+}
+
+func windowsEngineImageStagingCurrent(existing, desired corev1.Container) bool {
+	return existing.Image == desired.Image &&
+		reflect.DeepEqual(existing.Command, desired.Command) &&
+		reflect.DeepEqual(existing.Args, desired.Args) &&
+		windowsEngineImageProbeCurrent(existing.ReadinessProbe, desired.ReadinessProbe) &&
+		windowsEngineImageProbeCurrent(existing.LivenessProbe, desired.LivenessProbe)
+}
+
+func windowsEngineImageProbeCurrent(existing, desired *corev1.Probe) bool {
+	if existing == nil || desired == nil || existing.Exec == nil || desired.Exec == nil {
+		return existing == nil && desired == nil
+	}
+	return reflect.DeepEqual(existing.Exec.Command, desired.Exec.Command) &&
+		existing.InitialDelaySeconds == desired.InitialDelaySeconds &&
+		existing.TimeoutSeconds == desired.TimeoutSeconds &&
+		existing.PeriodSeconds == desired.PeriodSeconds &&
+		existing.FailureThreshold == desired.FailureThreshold
 }
 
 func (ic *EngineImageController) createWindowsEngineImageDaemonSetSpec(ei *longhorn.EngineImage, name string,
@@ -1063,11 +1092,13 @@ func (ic *EngineImageController) createWindowsEngineImageDaemonSetSpec(ei *longh
 		`New-Item -ItemType Directory -Force -Path $data | Out-Null`,
 		`$source = Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'usr\local\bin\longhorn.exe'`,
 		`$binary = Join-Path $data 'longhorn.exe'`,
-		`Copy-Item -Force $source $binary`,
-		`try { while ($true) { Start-Sleep -Seconds 3600 } } finally { Remove-Item -Force -ErrorAction SilentlyContinue $binary }`,
+		`if (-not (Test-Path -LiteralPath $binary)) { $temporary = "$binary.$PID.tmp"; try { Copy-Item -LiteralPath $source -Destination $temporary; Move-Item -LiteralPath $temporary -Destination $binary } finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue } }`,
+		`while ($true) { Start-Sleep -Seconds 3600 }`,
 	}, "; ")
-	probe := []string{"powershell.exe", "-NoLogo", "-NonInteractive", "-Command",
+	readinessProbe := []string{"powershell.exe", "-NoLogo", "-NonInteractive", "-Command",
 		`$productType=(Get-CimInstance Win32_OperatingSystem).ProductType; $iscsi=(Get-Service MSiSCSI).Status; $binary=Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'data\longhorn.exe'; if (($productType -in 2,3) -and ($iscsi -eq 'Running') -and (Test-Path $binary) -and (& $binary version --client-only)) { exit 0 }; exit 1`}
+	livenessProbe := []string{"powershell.exe", "-NoLogo", "-NonInteractive", "-Command",
+		`$binary=Join-Path $env:CONTAINER_SANDBOX_MOUNT_POINT 'data\longhorn.exe'; if (Test-Path -LiteralPath $binary) { exit 0 }; exit 1`}
 	maxUnavailable := intstr.FromString("100%")
 
 	daemonSet := &appsv1.DaemonSet{
@@ -1094,11 +1125,11 @@ func (ic *EngineImageController) createWindowsEngineImageDaemonSetSpec(ei *longh
 							HostProcess: &hostProcess, RunAsUserName: &runAs,
 						}},
 						VolumeMounts: []corev1.VolumeMount{{Name: "data", MountPath: `C:\data`}},
-						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: probe}},
-							InitialDelaySeconds: datastore.PodProbeInitialDelay, TimeoutSeconds: datastore.PodProbeTimeoutSeconds,
+						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: readinessProbe}},
+							InitialDelaySeconds: datastore.PodProbeInitialDelay, TimeoutSeconds: 15,
 							PeriodSeconds: datastore.PodProbePeriodSeconds, FailureThreshold: datastore.PodLivenessProbeFailureThreshold},
-						LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: probe}},
-							InitialDelaySeconds: datastore.PodProbeInitialDelay, TimeoutSeconds: datastore.PodProbeTimeoutSeconds,
+						LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: livenessProbe}},
+							InitialDelaySeconds: datastore.PodProbeInitialDelay, TimeoutSeconds: 10,
 							PeriodSeconds: datastore.PodProbePeriodSeconds, FailureThreshold: datastore.PodLivenessProbeFailureThreshold},
 					}},
 					Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: hostDirectory}}}},
