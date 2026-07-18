@@ -224,7 +224,7 @@ func (s *Server) NodeStageVolume(ctx context.Context, req *csipb.NodeStageVolume
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensurePortal(ctx, attachment.portal); err != nil {
+	if err := s.ensurePortal(ctx, attachment.portal, attachment.iqn); err != nil {
 		return nil, err
 	}
 	if _, err := s.iscsi.ConnectTarget(ctx, &iscsiapi.ConnectTargetRequest{TargetPortal: attachment.portal, Iqn: attachment.iqn}); err != nil {
@@ -343,18 +343,24 @@ func (s *Server) NodeExpandVolume(ctx context.Context, req *csipb.NodeExpandVolu
 	return nil, status.Error(codes.Unimplemented, "Windows online expansion requires persistent iSCSI LUN resize support")
 }
 
-func (s *Server) ensurePortal(ctx context.Context, portal *iscsiapi.TargetPortal) error {
-	portals, err := s.iscsi.ListTargetPortals(ctx, &iscsiapi.ListTargetPortalsRequest{})
+func (s *Server) ensurePortal(ctx context.Context, portal *iscsiapi.TargetPortal, iqn string) error {
+	// AddTargetPortal is an idempotent upsert in the Windows csi-proxy fork:
+	// it creates a missing portal and refreshes SendTargets on an existing one.
+	// Refreshing is essential for Longhorn's shared portal because its IQN set
+	// changes as volume engines start and stop.
+	if _, err := s.iscsi.AddTargetPortal(ctx, &iscsiapi.AddTargetPortalRequest{TargetPortal: portal}); err != nil {
+		return err
+	}
+	targets, err := s.iscsi.DiscoverTargetPortal(ctx, &iscsiapi.DiscoverTargetPortalRequest{TargetPortal: portal})
 	if err != nil {
 		return err
 	}
-	for _, existing := range portals.TargetPortals {
-		if strings.EqualFold(existing.TargetAddress, portal.TargetAddress) && existing.TargetPort == portal.TargetPort {
+	for _, target := range targets.Iqns {
+		if strings.EqualFold(target, iqn) {
 			return nil
 		}
 	}
-	_, err = s.iscsi.AddTargetPortal(ctx, &iscsiapi.AddTargetPortalRequest{TargetPortal: portal})
-	return err
+	return status.Errorf(codes.NotFound, "iSCSI target %s was not discovered at %s:%d", iqn, portal.TargetAddress, portal.TargetPort)
 }
 
 func (s *Server) targetDisks(ctx context.Context, attachment *attachment) ([]string, error) {
@@ -378,7 +384,20 @@ func (s *Server) ensureDirectory(ctx context.Context, path string) error {
 	return err
 }
 
-func windowsPath(path string) string { return filepath.Clean(strings.ReplaceAll(path, "/", `\`)) }
+func windowsPath(path string) string {
+	path = filepath.Clean(strings.ReplaceAll(path, "/", `\`))
+	if filepath.VolumeName(path) != "" || !strings.HasPrefix(path, `\`) {
+		return path
+	}
+	drive := strings.TrimSpace(os.Getenv("SystemDrive"))
+	if drive == "" {
+		drive = filepath.VolumeName(os.Getenv("SystemRoot"))
+	}
+	if drive == "" {
+		drive = "C:"
+	}
+	return drive + path
+}
 func mountCapability(filesystem string) *csipb.VolumeCapability {
 	return &csipb.VolumeCapability{AccessType: &csipb.VolumeCapability_Mount{Mount: &csipb.VolumeCapability_MountVolume{FsType: filesystem}}}
 }
